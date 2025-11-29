@@ -1,0 +1,8 @@
+node_modules/
+build/
+*.obj
+*.tlog
+*.log
+.DS_Store
+dist/
+.idea
