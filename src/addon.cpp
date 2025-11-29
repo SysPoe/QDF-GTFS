@@ -64,8 +64,19 @@ int GTFSAddon::GetDayOfWeek(const std::string& date_str) {
         int m = std::stoi(date_str.substr(4, 2));
         int d = std::stoi(date_str.substr(6, 2));
 
-        std::tm time_in = { 0, 0, 0, d, m - 1, y - 1900, 0, 0, -1, 0, 0 }; 
+        // 1. Zero-initialize the struct.
+        // This handles "tm_gmtoff" (Linux) and standard fields (Windows) automatically.
+        std::tm time_in = {};
+
+        // 2. Assign strictly the fields required by mktime
+        time_in.tm_mday = d;
+        time_in.tm_mon  = m - 1;
+        time_in.tm_year = y - 1900;
+        time_in.tm_isdst = -1; // Let system determine DST
+
+        // 3. mktime will fill in the rest (including tm_wday)
         std::time_t time_temp = std::mktime(&time_in);
+
         if (time_temp == -1) return -1;
         const std::tm * time_out = std::localtime(&time_temp);
         
