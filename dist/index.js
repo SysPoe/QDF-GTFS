@@ -82,6 +82,18 @@ export class GTFS {
     getCalendarDates() {
         return this.addonInstance.getCalendarDates();
     }
+    updateRealtime(alerts, tripUpdates, vehiclePositions) {
+        this.addonInstance.updateRealtime(alerts, tripUpdates, vehiclePositions);
+    }
+    getRealtimeTripUpdates() {
+        return this.addonInstance.getRealtimeTripUpdates();
+    }
+    getRealtimeVehiclePositions() {
+        return this.addonInstance.getRealtimeVehiclePositions();
+    }
+    getRealtimeAlerts() {
+        return this.addonInstance.getRealtimeAlerts();
+    }
     download(url) {
         return new Promise((resolve, reject) => {
             https.get(url, (res) => {

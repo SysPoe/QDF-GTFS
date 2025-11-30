@@ -94,6 +94,67 @@ export interface CalendarDate {
     date: string;
     exception_type: number;
 }
+export interface RealtimeTripUpdate {
+    trip: {
+        trip_id: string;
+        route_id: string;
+        direction_id: number;
+        start_time: string;
+        start_date: string;
+        schedule_relationship: number;
+    };
+    vehicle: {
+        id: string;
+        label: string;
+        license_plate: string;
+    };
+    stop_time_updates: {
+        stop_sequence: number;
+        stop_id: string;
+        arrival_delay: number;
+        arrival_time: number;
+        departure_delay: number;
+        departure_time: number;
+        schedule_relationship: number;
+    }[];
+    timestamp: number;
+    delay: number;
+}
+export interface RealtimeVehiclePosition {
+    trip: {
+        trip_id: string;
+        route_id: string;
+        direction_id: number;
+        start_time: string;
+        start_date: string;
+        schedule_relationship: number;
+    };
+    vehicle: {
+        id: string;
+        label: string;
+        license_plate: string;
+    };
+    position: {
+        latitude: number;
+        longitude: number;
+        bearing: number;
+        odometer: number;
+        speed: number;
+    };
+    current_stop_sequence: number;
+    stop_id: string;
+    current_status: number;
+    timestamp: number;
+    congestion_level: number;
+    occupancy_status: number;
+}
+export interface RealtimeAlert {
+    cause: string;
+    effect: string;
+    url: string;
+    header_text: string;
+    description_text: string;
+}
 export interface StopTimeQuery {
     stop_id?: string;
     trip_id?: string;
@@ -124,5 +185,9 @@ export declare class GTFS {
     getShapes(): Shape[];
     getCalendars(): Calendar[];
     getCalendarDates(): CalendarDate[];
+    updateRealtime(alerts: Buffer, tripUpdates: Buffer, vehiclePositions: Buffer): void;
+    getRealtimeTripUpdates(): RealtimeTripUpdate[];
+    getRealtimeVehiclePositions(): RealtimeVehiclePosition[];
+    getRealtimeAlerts(): RealtimeAlert[];
     private download;
 }
