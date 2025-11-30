@@ -33,10 +33,10 @@ export class GTFS {
     async loadFromUrl(url) {
         if (this.logger) {
             if (this.ansi) {
-                this.logger(`\x1b[32m[GTFS] Downloading ${url}...\x1b[0m`);
+                this.logger(`\x1b[32mDownloading ${url}...\x1b[0m`);
             }
             else {
-                this.logger(`[GTFS] Downloading ${url}...`);
+                this.logger(`Downloading ${url}...`);
             }
         }
         const buffer = await this.download(url);

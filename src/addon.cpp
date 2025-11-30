@@ -32,9 +32,9 @@ public:
                 std::string formattedMsg = msg;
                 if (logger.ansi) {
                     // Simple ANSI coloring (Green for success/loading)
-                    formattedMsg = "\033[32m[GTFS] " + msg + "\033[0m";
+                    formattedMsg = "\033[32m" + msg + "\033[0m";
                 } else {
-                    formattedMsg = "[GTFS] " + msg;
+                    formattedMsg = msg;
                 }
 
                 auto callback = [formattedMsg](Napi::Env env, Napi::Function jsCallback) {
