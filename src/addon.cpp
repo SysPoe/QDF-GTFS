@@ -4,30 +4,67 @@
 #include <ctime>
 #include <string_view>
 #include <vector>
+#include <functional>
+
+// Simple logger interface
+struct Logger {
+    Napi::ThreadSafeFunction tsfn;
+    bool ansi;
+};
 
 class GTFSWorker : public Napi::AsyncWorker {
 public:
-    GTFSWorker(Napi::Function& callback, const std::vector<unsigned char>& zipData, gtfs::GTFSData* targetData)
-        : Napi::AsyncWorker(callback), zipData(zipData), targetData(targetData) {}
+    GTFSWorker(Napi::Env env, std::vector<unsigned char>&& zipData, gtfs::GTFSData* targetData, Logger logger)
+        : Napi::AsyncWorker(env, "GTFSWorker"), deferred(Napi::Promise::Deferred::New(env)), zipData(std::move(zipData)), targetData(targetData), logger(logger) {}
 
-    ~GTFSWorker() {}
+    ~GTFSWorker() {
+        if (logger.tsfn) {
+            logger.tsfn.Release();
+        }
+    }
 
     void Execute() override {
         try {
-            gtfs::load_from_zip(*targetData, zipData.data(), zipData.size());
+            // Callback wrapper for gtfs_parser
+            auto logCallback = [this](const std::string& msg) {
+                if (!logger.tsfn) return;
+                
+                std::string formattedMsg = msg;
+                if (logger.ansi) {
+                    // Simple ANSI coloring (Green for success/loading)
+                    formattedMsg = "\033[32m[GTFS] " + msg + "\033[0m";
+                } else {
+                    formattedMsg = "[GTFS] " + msg;
+                }
+
+                auto callback = [formattedMsg](Napi::Env env, Napi::Function jsCallback) {
+                    jsCallback.Call({Napi::String::New(env, formattedMsg)});
+                };
+                
+                logger.tsfn.BlockingCall(callback);
+            };
+
+            gtfs::load_from_zip(*targetData, zipData.data(), zipData.size(), logCallback);
         } catch (const std::exception& e) {
             SetError(e.what());
         }
     }
 
     void OnOK() override {
-        Napi::Env env = Env();
-        Callback().Call({env.Null()});
+        deferred.Resolve(Env().Null());
     }
 
+    void OnError(const Napi::Error& e) override {
+        deferred.Reject(e.Value());
+    }
+    
+    Napi::Promise GetPromise() { return deferred.Promise(); }
+
 private:
+    Napi::Promise::Deferred deferred;
     std::vector<unsigned char> zipData;
     gtfs::GTFSData* targetData;
+    Logger logger;
 };
 
 class GTFSAddon : public Napi::ObjectWrap<GTFSAddon> {
@@ -64,17 +101,13 @@ int GTFSAddon::GetDayOfWeek(const std::string& date_str) {
         int m = std::stoi(date_str.substr(4, 2));
         int d = std::stoi(date_str.substr(6, 2));
 
-        // 1. Zero-initialize the struct.
-        // This handles "tm_gmtoff" (Linux) and standard fields (Windows) automatically.
         std::tm time_in = {};
 
-        // 2. Assign strictly the fields required by mktime
         time_in.tm_mday = d;
         time_in.tm_mon  = m - 1;
         time_in.tm_year = y - 1900;
         time_in.tm_isdst = -1; // Let system determine DST
 
-        // 3. mktime will fill in the rest (including tm_wday)
         std::time_t time_temp = std::mktime(&time_in);
 
         if (time_temp == -1) return -1;
@@ -151,54 +184,18 @@ Napi::Value GTFSAddon::LoadFromBuffer(const Napi::CallbackInfo& info) {
     }
 
     Napi::Buffer<unsigned char> buffer = info[0].As<Napi::Buffer<unsigned char>>();
-    
-    // Copy buffer data to vector for thread safety
     std::vector<unsigned char> zipData(buffer.Data(), buffer.Data() + buffer.Length());
 
-    // Create Promise
-    Napi::Promise::Deferred deferred = Napi::Promise::Deferred::New(env);
+    // Logger setup
+    Logger logger = { nullptr, false };
+    if (info.Length() > 1 && info[1].IsFunction()) {
+        logger.tsfn = Napi::ThreadSafeFunction::New(env, info[1].As<Napi::Function>(), "GTFSLogger", 0, 1);
+    }
+    if (info.Length() > 2 && info[2].IsBoolean()) {
+        logger.ansi = info[2].As<Napi::Boolean>().Value();
+    }
 
-    // Create Worker
-    // We pass a lambda wrapper as the callback which resolves the promise
-    // Napi::AsyncWorker usually takes a Function to call back.
-    // Here we can use a dummy function and handle resolution manually or pass a lambda?
-    // Napi::AsyncWorker's constructor takes a Function.
-    
-    // Actually, creating a JS function from C++ just to satisfy the constructor is annoying.
-    // Better pattern: Subclass AsyncWorker to accept Deferred.
-    
-    class PromiseWorker : public Napi::AsyncWorker {
-        public:
-            PromiseWorker(Napi::Env env, std::vector<unsigned char>&& zipData, gtfs::GTFSData* targetData)
-                : Napi::AsyncWorker(env, "GTFSWorker"), deferred(Napi::Promise::Deferred::New(env)), zipData(std::move(zipData)), targetData(targetData) {}
-            
-            ~PromiseWorker() {}
-
-            void Execute() override {
-                try {
-                    gtfs::load_from_zip(*targetData, zipData.data(), zipData.size());
-                } catch (const std::exception& e) {
-                    SetError(e.what());
-                }
-            }
-
-            void OnOK() override {
-                deferred.Resolve(Env().Null());
-            }
-
-            void OnError(const Napi::Error& e) override {
-                deferred.Reject(e.Value());
-            }
-            
-            Napi::Promise GetPromise() { return deferred.Promise(); }
-
-        private:
-            Napi::Promise::Deferred deferred;
-            std::vector<unsigned char> zipData;
-            gtfs::GTFSData* targetData;
-    };
-
-    auto worker = new PromiseWorker(env, std::move(zipData), &data);
+    auto worker = new GTFSWorker(env, std::move(zipData), &data, logger);
     worker->Queue();
     return worker->GetPromise();
 }

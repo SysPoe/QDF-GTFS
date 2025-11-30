@@ -4,8 +4,11 @@
 #include <algorithm>
 #include <string.h>
 #include <cstdio>
+#include <functional>
 
 namespace gtfs {
+
+using LogFn = std::function<void(const std::string&)>;
 
 // Helper to convert "HH:MM:SS" to seconds
 int parse_time_seconds(const std::string& time_str) {
@@ -86,11 +89,11 @@ bool get_bool(const std::vector<std::string>& row, int index, bool default_val =
 }
 
 
-void parse_agency(GTFSData& data, const std::string& content) {
+size_t parse_agency(GTFSData& data, const std::string& content) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line); // Header
-    if (line.empty()) return;
+    if (line.empty()) return 0;
 
     auto headers = parse_csv_line(line);
     int id_idx = get_col_index(headers, "agency_id");
@@ -102,6 +105,7 @@ void parse_agency(GTFSData& data, const std::string& content) {
     int fare_url_idx = get_col_index(headers, "agency_fare_url");
     int email_idx = get_col_index(headers, "agency_email");
 
+    size_t count = 0;
     while (std::getline(ss, line)) {
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
@@ -115,14 +119,16 @@ void parse_agency(GTFSData& data, const std::string& content) {
         a.agency_fare_url = get_val(row, fare_url_idx);
         a.agency_email = get_val(row, email_idx);
         data.agencies[a.agency_id] = a;
+        count++;
     }
+    return count;
 }
 
-void parse_routes(GTFSData& data, const std::string& content) {
+size_t parse_routes(GTFSData& data, const std::string& content) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
-    if (line.empty()) return;
+    if (line.empty()) return 0;
 
     auto headers = parse_csv_line(line);
     int id_idx = get_col_index(headers, "route_id");
@@ -135,6 +141,7 @@ void parse_routes(GTFSData& data, const std::string& content) {
     int color_idx = get_col_index(headers, "route_color");
     int text_color_idx = get_col_index(headers, "route_text_color");
 
+    size_t count = 0;
     while (std::getline(ss, line)) {
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
@@ -149,14 +156,16 @@ void parse_routes(GTFSData& data, const std::string& content) {
         r.route_color = get_val(row, color_idx);
         r.route_text_color = get_val(row, text_color_idx);
         data.routes[r.route_id] = r;
+        count++;
     }
+    return count;
 }
 
-void parse_trips(GTFSData& data, const std::string& content) {
+size_t parse_trips(GTFSData& data, const std::string& content) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
-    if (line.empty()) return;
+    if (line.empty()) return 0;
 
     auto headers = parse_csv_line(line);
     int route_id_idx = get_col_index(headers, "route_id");
@@ -170,6 +179,7 @@ void parse_trips(GTFSData& data, const std::string& content) {
     int wheelchair_idx = get_col_index(headers, "wheelchair_accessible");
     int bikes_idx = get_col_index(headers, "bikes_allowed");
 
+    size_t count = 0;
     while (std::getline(ss, line)) {
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
@@ -185,14 +195,16 @@ void parse_trips(GTFSData& data, const std::string& content) {
         t.wheelchair_accessible = get_int(row, wheelchair_idx);
         t.bikes_allowed = get_int(row, bikes_idx);
         data.trips[t.trip_id] = t;
+        count++;
     }
+    return count;
 }
 
-void parse_stops(GTFSData& data, const std::string& content) {
+size_t parse_stops(GTFSData& data, const std::string& content) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
-    if (line.empty()) return;
+    if (line.empty()) return 0;
 
     auto headers = parse_csv_line(line);
     int id_idx = get_col_index(headers, "stop_id");
@@ -210,6 +222,7 @@ void parse_stops(GTFSData& data, const std::string& content) {
     int level_idx = get_col_index(headers, "level_id");
     int platform_idx = get_col_index(headers, "platform_code");
 
+    size_t count = 0;
     while (std::getline(ss, line)) {
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
@@ -229,14 +242,16 @@ void parse_stops(GTFSData& data, const std::string& content) {
         s.level_id = get_val(row, level_idx);
         s.platform_code = get_val(row, platform_idx);
         data.stops[s.stop_id] = s;
+        count++;
     }
+    return count;
 }
 
-void parse_stop_times(GTFSData& data, const std::string& content) {
+size_t parse_stop_times(GTFSData& data, const std::string& content) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
-    if (line.empty()) return;
+    if (line.empty()) return 0;
 
     auto headers = parse_csv_line(line);
     int trip_id_idx = get_col_index(headers, "trip_id");
@@ -250,6 +265,7 @@ void parse_stop_times(GTFSData& data, const std::string& content) {
     int dist_idx = get_col_index(headers, "shape_dist_traveled");
     int timepoint_idx = get_col_index(headers, "timepoint");
 
+    size_t count = 0;
     while (std::getline(ss, line)) {
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
@@ -265,14 +281,16 @@ void parse_stop_times(GTFSData& data, const std::string& content) {
         st.shape_dist_traveled = get_double(row, dist_idx);
         st.timepoint = get_int(row, timepoint_idx);
         data.stop_times.push_back(st);
+        count++;
     }
+    return count;
 }
 
-void parse_calendar(GTFSData& data, const std::string& content) {
+size_t parse_calendar(GTFSData& data, const std::string& content) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
-    if (line.empty()) return;
+    if (line.empty()) return 0;
 
     auto headers = parse_csv_line(line);
     int service_id_idx = get_col_index(headers, "service_id");
@@ -286,6 +304,7 @@ void parse_calendar(GTFSData& data, const std::string& content) {
     int start_idx = get_col_index(headers, "start_date");
     int end_idx = get_col_index(headers, "end_date");
 
+    size_t count = 0;
     while (std::getline(ss, line)) {
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
@@ -301,20 +320,23 @@ void parse_calendar(GTFSData& data, const std::string& content) {
         c.start_date = get_val(row, start_idx);
         c.end_date = get_val(row, end_idx);
         data.calendars[c.service_id] = c;
+        count++;
     }
+    return count;
 }
 
-void parse_calendar_dates(GTFSData& data, const std::string& content) {
+size_t parse_calendar_dates(GTFSData& data, const std::string& content) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
-    if (line.empty()) return;
+    if (line.empty()) return 0;
 
     auto headers = parse_csv_line(line);
     int service_id_idx = get_col_index(headers, "service_id");
     int date_idx = get_col_index(headers, "date");
     int exc_idx = get_col_index(headers, "exception_type");
 
+    size_t count = 0;
     while (std::getline(ss, line)) {
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
@@ -322,14 +344,16 @@ void parse_calendar_dates(GTFSData& data, const std::string& content) {
         std::string date = get_val(row, date_idx);
         int exc = get_int(row, exc_idx);
         data.calendar_dates[service_id][date] = exc;
+        count++;
     }
+    return count;
 }
 
-void parse_shapes(GTFSData& data, const std::string& content) {
+size_t parse_shapes(GTFSData& data, const std::string& content) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
-    if (line.empty()) return;
+    if (line.empty()) return 0;
 
     auto headers = parse_csv_line(line);
     int id_idx = get_col_index(headers, "shape_id");
@@ -338,6 +362,7 @@ void parse_shapes(GTFSData& data, const std::string& content) {
     int seq_idx = get_col_index(headers, "shape_pt_sequence");
     int dist_idx = get_col_index(headers, "shape_dist_traveled");
 
+    size_t count = 0;
     while (std::getline(ss, line)) {
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
@@ -348,14 +373,16 @@ void parse_shapes(GTFSData& data, const std::string& content) {
         s.shape_pt_sequence = get_int(row, seq_idx);
         s.shape_dist_traveled = get_double(row, dist_idx);
         data.shapes.push_back(s);
+        count++;
     }
+    return count;
 }
 
-void parse_feed_info(GTFSData& data, const std::string& content) {
+size_t parse_feed_info(GTFSData& data, const std::string& content) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
-    if (line.empty()) return;
+    if (line.empty()) return 0;
 
     auto headers = parse_csv_line(line);
     int pub_name_idx = get_col_index(headers, "feed_publisher_name");
@@ -368,6 +395,7 @@ void parse_feed_info(GTFSData& data, const std::string& content) {
     int email_idx = get_col_index(headers, "feed_contact_email");
     int contact_url_idx = get_col_index(headers, "feed_contact_url");
 
+    size_t count = 0;
     while (std::getline(ss, line)) {
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
@@ -382,17 +410,19 @@ void parse_feed_info(GTFSData& data, const std::string& content) {
         f.feed_contact_email = get_val(row, email_idx);
         f.feed_contact_url = get_val(row, contact_url_idx);
         data.feed_info.push_back(f);
+        count++;
     }
+    return count;
 }
 
-void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_size) {
-    data.clear(); // Clear existing data
+void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_size, LogFn log = nullptr) {
+    data.clear(); 
 
     mz_zip_archive zip_archive;
     memset(&zip_archive, 0, sizeof(zip_archive));
 
     if (!mz_zip_reader_init_mem(&zip_archive, zip_data, zip_size, 0)) {
-        // Handle error: Failed to init zip reader
+        if (log) log("Failed to init zip reader");
         std::cerr << "Failed to init zip reader" << std::endl;
         return;
     }
@@ -410,20 +440,25 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
         std::string content((char*)p, uncomp_size);
         mz_free(p);
 
-        if (filename == "agency.txt") parse_agency(data, content);
-        else if (filename == "routes.txt") parse_routes(data, content);
-        else if (filename == "trips.txt") parse_trips(data, content);
-        else if (filename == "stops.txt") parse_stops(data, content);
-        else if (filename == "stop_times.txt") parse_stop_times(data, content);
-        else if (filename == "calendar.txt") parse_calendar(data, content);
-        else if (filename == "calendar_dates.txt") parse_calendar_dates(data, content);
-        else if (filename == "shapes.txt") parse_shapes(data, content);
-        else if (filename == "feed_info.txt") parse_feed_info(data, content);
+        if (log) log("Loading " + filename + "...");
+        
+        size_t count = 0;
+        if (filename == "agency.txt") count = parse_agency(data, content);
+        else if (filename == "routes.txt") count = parse_routes(data, content);
+        else if (filename == "trips.txt") count = parse_trips(data, content);
+        else if (filename == "stops.txt") count = parse_stops(data, content);
+        else if (filename == "stop_times.txt") count = parse_stop_times(data, content);
+        else if (filename == "calendar.txt") count = parse_calendar(data, content);
+        else if (filename == "calendar_dates.txt") count = parse_calendar_dates(data, content);
+        else if (filename == "shapes.txt") count = parse_shapes(data, content);
+        else if (filename == "feed_info.txt") count = parse_feed_info(data, content);
+        
+        if (log) log("Loaded " + std::to_string(count) + " entries from " + filename);
     }
 
     mz_zip_reader_end(&zip_archive);
 
-    // Sort stop_times by trip_id and sequence for fast lookup
+    if (log) log("Sorting stop times...");
     std::sort(data.stop_times.begin(), data.stop_times.end(), 
         [](const StopTime& a, const StopTime& b) {
             if (a.trip_id != b.trip_id) {
@@ -433,10 +468,12 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
         }
     );
 
-    // Populate secondary index using interned IDs
+    if (log) log("Indexing stop times by stop_id...");
     for (size_t i = 0; i < data.stop_times.size(); ++i) {
         data.stop_times_by_stop_id[data.stop_times[i].stop_id].push_back(i);
     }
+    
+    if (log) log("GTFS Data Loading Complete.");
 }
 
 } // namespace gtfs

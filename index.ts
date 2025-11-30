@@ -129,14 +129,30 @@ export interface StopTimeQuery {
     end_time?: number | string; // Seconds or HH:MM:SS
 }
 
+export interface GTFSOptions {
+    logger?: (msg: string) => void;
+    ansi?: boolean;
+}
+
 export class GTFS {
   private addonInstance: any;
+  private logger?: (msg: string) => void;
+  private ansi: boolean;
 
-  constructor() {
+  constructor(options?: GTFSOptions) {
       this.addonInstance = new GTFSAddon();
+      this.logger = options?.logger;
+      this.ansi = options?.ansi || false;
   }
 
   async loadFromUrl(url: string): Promise<void> {
+    if (this.logger) {
+        if (this.ansi) {
+            this.logger(`\x1b[32m[GTFS] Downloading ${url}...\x1b[0m`);
+        } else {
+            this.logger(`[GTFS] Downloading ${url}...`);
+        }
+    }
     const buffer = await this.download(url);
     return this.loadFromBuffer(buffer);
   }
@@ -147,7 +163,7 @@ export class GTFS {
   }
 
   loadFromBuffer(buffer: Buffer): Promise<void> {
-    return this.addonInstance.loadFromBuffer(buffer);
+    return this.addonInstance.loadFromBuffer(buffer, this.logger, this.ansi);
   }
 
   getRoutes(): Route[] {
