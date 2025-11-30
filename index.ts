@@ -282,6 +282,7 @@ export interface CalendarDate {
 export interface RealtimeStopTimeUpdate {
     stop_sequence: number;
     stop_id: string;
+    trip_id: string;
     arrival_delay: number;
     arrival_time: number;
     departure_delay: number;
@@ -299,6 +300,8 @@ export interface RealtimeUpdateTripInfo {
 }
 
 export interface RealtimeTripUpdate {
+    update_id: string;
+    is_deleted: boolean;
     trip: RealtimeUpdateTripInfo;
     vehicle: {
         id: string;
@@ -311,6 +314,8 @@ export interface RealtimeTripUpdate {
 }
 
 export interface RealtimeVehiclePosition {
+    update_id: string;
+    is_deleted: boolean;
     trip: RealtimeUpdateTripInfo;
     vehicle: {
         id: string;
@@ -330,9 +335,12 @@ export interface RealtimeVehiclePosition {
     timestamp: number;
     congestion_level: CongestionLevel;
     occupancy_status: OccupancyStatus;
+    occupancy_percentage: number;
 }
 
 export interface RealtimeAlert {
+    update_id: string;
+    is_deleted: boolean;
     cause: AlertCause;
     effect: AlertEffect;
     url: string;

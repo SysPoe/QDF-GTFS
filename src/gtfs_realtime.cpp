@@ -101,6 +101,11 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         // Inside FeedEntity, we have OPTIONAL MESSAGEs: trip_update, vehicle, alert.
         // We need to pre-configure their callbacks because they are decoded recursively as part of FeedEntity.
 
+        // Capture entity ID and is_deleted
+        entity.id.funcs.decode = decode_string;
+        std::string entity_id;
+        entity.id.arg = &entity_id;
+
         // --- Trip Update Setup ---
         entity.trip_update.trip.trip_id.funcs.decode = decode_string;
         entity.trip_update.trip.trip_id.arg = &tu_ctx.current_update.trip.trip_id;
@@ -135,6 +140,9 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
 
             stu.stop_sequence = pb_stu.stop_sequence;
             stu.schedule_relationship = pb_stu.schedule_relationship;
+            // Propagate trip_id
+            stu.trip_id = inner_ctx->current_update.trip.trip_id;
+
             if (pb_stu.has_arrival) {
                 stu.arrival_delay = pb_stu.arrival.delay;
                 stu.arrival_time = pb_stu.arrival.time;
@@ -186,19 +194,36 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
 
         // Post-decode logic to save data
         if (entity.has_trip_update) {
+            tu_ctx.current_update.update_id = entity_id;
+            tu_ctx.current_update.is_deleted = entity.is_deleted;
             tu_ctx.current_update.timestamp = entity.trip_update.timestamp;
             tu_ctx.current_update.delay = entity.trip_update.delay;
             tu_ctx.current_update.trip.direction_id = entity.trip_update.trip.direction_id;
             tu_ctx.current_update.trip.schedule_relationship = entity.trip_update.trip.schedule_relationship;
+
+            // Retroactively set trip_id on stop_time_updates if it wasn't available during their parse
+            // (parsing order is not guaranteed by protobuf spec, though usually consistent)
+            // Actually, nanopb parses sequentially. But trip_id might be parsed AFTER stop_time_updates
+            // if fields are out of order in wire format.
+            // To be safe, update them all here.
+            for(auto& stu : tu_ctx.current_update.stop_time_updates) {
+                if(stu.trip_id.empty()) {
+                    stu.trip_id = tu_ctx.current_update.trip.trip_id;
+                }
+            }
+
             tu_ctx.data->realtime_trip_updates.push_back(tu_ctx.current_update);
         }
 
         if (entity.has_vehicle) {
+             vp_ctx.current_pos.update_id = entity_id;
+             vp_ctx.current_pos.is_deleted = entity.is_deleted;
              vp_ctx.current_pos.current_stop_sequence = entity.vehicle.current_stop_sequence;
              vp_ctx.current_pos.current_status = entity.vehicle.current_status;
              vp_ctx.current_pos.timestamp = entity.vehicle.timestamp;
              vp_ctx.current_pos.congestion_level = entity.vehicle.congestion_level;
              vp_ctx.current_pos.occupancy_status = entity.vehicle.occupancy_status;
+             vp_ctx.current_pos.occupancy_percentage = entity.vehicle.occupancy_percentage;
              vp_ctx.current_pos.trip.direction_id = entity.vehicle.trip.direction_id;
              vp_ctx.current_pos.trip.schedule_relationship = entity.vehicle.trip.schedule_relationship;
              if (entity.vehicle.has_position) {
@@ -212,6 +237,8 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         }
 
         if (entity.has_alert) {
+            al_ctx.current_alert.update_id = entity_id;
+            al_ctx.current_alert.is_deleted = entity.is_deleted;
             al_ctx.current_alert.cause = entity.alert.cause;
             al_ctx.current_alert.effect = entity.alert.effect;
             al_ctx.current_alert.severity_level = entity.alert.severity_level;
