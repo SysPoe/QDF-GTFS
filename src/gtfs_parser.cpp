@@ -140,6 +140,8 @@ size_t parse_routes(GTFSData& data, const std::string& content) {
     int url_idx = get_col_index(headers, "route_url");
     int color_idx = get_col_index(headers, "route_color");
     int text_color_idx = get_col_index(headers, "route_text_color");
+    int cont_pickup_idx = get_col_index(headers, "continuous_pickup");
+    int cont_drop_off_idx = get_col_index(headers, "continuous_drop_off");
 
     size_t count = 0;
     while (std::getline(ss, line)) {
@@ -155,6 +157,11 @@ size_t parse_routes(GTFSData& data, const std::string& content) {
         r.route_url = get_val(row, url_idx);
         r.route_color = get_val(row, color_idx);
         r.route_text_color = get_val(row, text_color_idx);
+        r.continuous_pickup = get_int(row, cont_pickup_idx, 1); // Default to 1 (No continuous pickup/dropoff)? Or 0?
+        // Spec says: "If this field is empty, it indicates that continuous stops are not available."
+        // 0=Continuous, 1=Not available, 2=Phone, 3=Driver.
+        // If empty, it means NOT available, so 1.
+        r.continuous_drop_off = get_int(row, cont_drop_off_idx, 1);
         data.routes[r.route_id] = r;
         count++;
     }
@@ -264,6 +271,8 @@ size_t parse_stop_times(GTFSData& data, const std::string& content) {
     int drop_off_idx = get_col_index(headers, "drop_off_type");
     int dist_idx = get_col_index(headers, "shape_dist_traveled");
     int timepoint_idx = get_col_index(headers, "timepoint");
+    int cont_pickup_idx = get_col_index(headers, "continuous_pickup");
+    int cont_drop_off_idx = get_col_index(headers, "continuous_drop_off");
 
     size_t count = 0;
     while (std::getline(ss, line)) {
@@ -280,6 +289,8 @@ size_t parse_stop_times(GTFSData& data, const std::string& content) {
         st.drop_off_type = get_int(row, drop_off_idx);
         st.shape_dist_traveled = get_double(row, dist_idx);
         st.timepoint = get_int(row, timepoint_idx);
+        st.continuous_pickup = get_int(row, cont_pickup_idx, 1);
+        st.continuous_drop_off = get_int(row, cont_drop_off_idx, 1);
         data.stop_times.push_back(st);
         count++;
     }
