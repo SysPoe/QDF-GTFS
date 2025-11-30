@@ -297,6 +297,9 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
         const auto& tu = data.realtime_trip_updates[i];
         Napi::Object obj = Napi::Object::New(env);
 
+        obj.Set("update_id", tu.update_id);
+        obj.Set("is_deleted", tu.is_deleted);
+
         Napi::Object trip = Napi::Object::New(env);
         trip.Set("trip_id", tu.trip.trip_id);
         trip.Set("route_id", tu.trip.route_id);
@@ -318,6 +321,7 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
             Napi::Object stu_obj = Napi::Object::New(env);
             stu_obj.Set("stop_sequence", stu.stop_sequence);
             stu_obj.Set("stop_id", stu.stop_id);
+            stu_obj.Set("trip_id", stu.trip_id);
             stu_obj.Set("arrival_delay", stu.arrival_delay);
             stu_obj.Set("arrival_time", stu.arrival_time);
             stu_obj.Set("departure_delay", stu.departure_delay);
@@ -340,6 +344,9 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
     for (size_t i = 0; i < data.realtime_vehicle_positions.size(); ++i) {
         const auto& vp = data.realtime_vehicle_positions[i];
         Napi::Object obj = Napi::Object::New(env);
+
+        obj.Set("update_id", vp.update_id);
+        obj.Set("is_deleted", vp.is_deleted);
 
         Napi::Object trip = Napi::Object::New(env);
         trip.Set("trip_id", vp.trip.trip_id);
@@ -370,6 +377,7 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
         obj.Set("timestamp", (double)vp.timestamp);
         obj.Set("congestion_level", vp.congestion_level);
         obj.Set("occupancy_status", vp.occupancy_status);
+        obj.Set("occupancy_percentage", vp.occupancy_percentage);
 
         arr[i] = obj;
     }
@@ -382,6 +390,9 @@ Napi::Value GTFSAddon::GetRealtimeAlerts(const Napi::CallbackInfo& info) {
     for (size_t i = 0; i < data.realtime_alerts.size(); ++i) {
         const auto& a = data.realtime_alerts[i];
         Napi::Object obj = Napi::Object::New(env);
+
+        obj.Set("update_id", a.update_id);
+        obj.Set("is_deleted", a.is_deleted);
 
         // Active periods omitted for brevity/complexity mapping for now
 

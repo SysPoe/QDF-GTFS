@@ -173,6 +173,7 @@ struct RealtimeVehicleDescriptor {
 struct RealtimeStopTimeUpdate {
     int stop_sequence;
     std::string stop_id;
+    std::string trip_id;
     int arrival_delay;
     int64_t arrival_time;
     int arrival_uncertainty;
@@ -183,6 +184,8 @@ struct RealtimeStopTimeUpdate {
 };
 
 struct RealtimeTripUpdate {
+    std::string update_id;
+    bool is_deleted;
     RealtimeTripDescriptor trip;
     RealtimeVehicleDescriptor vehicle;
     std::vector<RealtimeStopTimeUpdate> stop_time_updates;
@@ -199,6 +202,8 @@ struct RealtimePosition {
 };
 
 struct RealtimeVehiclePosition {
+    std::string update_id;
+    bool is_deleted;
     RealtimeTripDescriptor trip;
     RealtimeVehicleDescriptor vehicle;
     RealtimePosition position;
@@ -208,9 +213,12 @@ struct RealtimeVehiclePosition {
     uint64_t timestamp;
     int congestion_level;
     int occupancy_status;
+    int occupancy_percentage;
 };
 
 struct RealtimeAlert {
+    std::string update_id;
+    bool is_deleted;
     std::vector<std::string> active_period_start;
     std::vector<std::string> active_period_end;
     // Simplified for now, complex to map all EntitySelectors
