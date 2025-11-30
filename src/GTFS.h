@@ -150,9 +150,81 @@ struct FeedInfo {
     std::string feed_contact_url;
 };
 
+// Realtime Structures
+struct RealtimeTripDescriptor {
+    std::string trip_id;
+    std::string route_id;
+    int direction_id;
+    std::string start_time;
+    std::string start_date;
+    int schedule_relationship;
+};
+
+struct RealtimeVehicleDescriptor {
+    std::string id;
+    std::string label;
+    std::string license_plate;
+};
+
+struct RealtimeStopTimeUpdate {
+    int stop_sequence;
+    std::string stop_id;
+    int arrival_delay;
+    int64_t arrival_time;
+    int arrival_uncertainty;
+    int departure_delay;
+    int64_t departure_time;
+    int departure_uncertainty;
+    int schedule_relationship;
+};
+
+struct RealtimeTripUpdate {
+    RealtimeTripDescriptor trip;
+    RealtimeVehicleDescriptor vehicle;
+    std::vector<RealtimeStopTimeUpdate> stop_time_updates;
+    uint64_t timestamp;
+    int delay;
+};
+
+struct RealtimePosition {
+    float latitude;
+    float longitude;
+    float bearing;
+    double odometer;
+    float speed;
+};
+
+struct RealtimeVehiclePosition {
+    RealtimeTripDescriptor trip;
+    RealtimeVehicleDescriptor vehicle;
+    RealtimePosition position;
+    int current_stop_sequence;
+    std::string stop_id;
+    int current_status;
+    uint64_t timestamp;
+    int congestion_level;
+    int occupancy_status;
+};
+
+struct RealtimeAlert {
+    std::vector<std::string> active_period_start;
+    std::vector<std::string> active_period_end;
+    // Simplified for now, complex to map all EntitySelectors
+    std::string cause;
+    std::string effect;
+    std::string url;
+    std::string header_text;
+    std::string description_text;
+};
+
 class GTFSData {
 public:
     StringPool string_pool;
+
+    // Realtime Data Containers
+    std::vector<RealtimeTripUpdate> realtime_trip_updates;
+    std::vector<RealtimeVehiclePosition> realtime_vehicle_positions;
+    std::vector<RealtimeAlert> realtime_alerts;
 
     std::unordered_map<std::string, Agency> agencies;
     std::unordered_map<std::string, Calendar> calendars;
@@ -185,6 +257,10 @@ public:
         trips.clear();
         shapes.clear();
         feed_info.clear();
+
+        realtime_trip_updates.clear();
+        realtime_vehicle_positions.clear();
+        realtime_alerts.clear();
     }
 };
 

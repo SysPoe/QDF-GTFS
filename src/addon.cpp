@@ -1,6 +1,7 @@
 #include <napi.h>
 #include "GTFS.h"
 #include "gtfs_parser.cpp"
+#include "gtfs_realtime.cpp"
 #include <ctime>
 #include <string_view>
 #include <vector>
@@ -87,6 +88,10 @@ private:
     Napi::Value GetShapes(const Napi::CallbackInfo& info);
     Napi::Value GetCalendars(const Napi::CallbackInfo& info);
     Napi::Value GetCalendarDates(const Napi::CallbackInfo& info);
+    Napi::Value UpdateRealtime(const Napi::CallbackInfo& info);
+    Napi::Value GetRealtimeTripUpdates(const Napi::CallbackInfo& info);
+    Napi::Value GetRealtimeVehiclePositions(const Napi::CallbackInfo& info);
+    Napi::Value GetRealtimeAlerts(const Napi::CallbackInfo& info);
 
     // Helpers
     bool IsServiceActive(const std::string& service_id, const std::string& date_str);
@@ -162,7 +167,11 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("getTrips", &GTFSAddon::GetTrips),
         InstanceMethod("getShapes", &GTFSAddon::GetShapes),
         InstanceMethod("getCalendars", &GTFSAddon::GetCalendars),
-        InstanceMethod("getCalendarDates", &GTFSAddon::GetCalendarDates)
+        InstanceMethod("getCalendarDates", &GTFSAddon::GetCalendarDates),
+        InstanceMethod("updateRealtime", &GTFSAddon::UpdateRealtime),
+        InstanceMethod("getRealtimeTripUpdates", &GTFSAddon::GetRealtimeTripUpdates),
+        InstanceMethod("getRealtimeVehiclePositions", &GTFSAddon::GetRealtimeVehiclePositions),
+        InstanceMethod("getRealtimeAlerts", &GTFSAddon::GetRealtimeAlerts)
     });
 
     Napi::FunctionReference* constructor = new Napi::FunctionReference();
@@ -240,6 +249,147 @@ Napi::Value GTFSAddon::GetRoutes(const Napi::CallbackInfo& info) {
         obj.Set("route_color", r.route_color);
         obj.Set("route_text_color", r.route_text_color);
         arr[i++] = obj;
+    }
+    return arr;
+}
+
+Napi::Value GTFSAddon::UpdateRealtime(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 3) {
+         Napi::TypeError::New(env, "Expected 3 arguments: alerts, tripUpdates, vehiclePositions").ThrowAsJavaScriptException();
+         return env.Null();
+    }
+
+    // Clear old realtime data? Or just append?
+    // Usually updates replace the state.
+    // Let's clear first.
+    data.realtime_trip_updates.clear();
+    data.realtime_vehicle_positions.clear();
+    data.realtime_alerts.clear();
+
+    // 1. Alerts
+    if (info[0].IsBuffer()) {
+        Napi::Buffer<unsigned char> buf = info[0].As<Napi::Buffer<unsigned char>>();
+        gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 2);
+    }
+
+    // 2. TripUpdates
+    if (info[1].IsBuffer()) {
+        Napi::Buffer<unsigned char> buf = info[1].As<Napi::Buffer<unsigned char>>();
+        gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 0);
+    }
+
+    // 3. VehiclePositions
+    if (info[2].IsBuffer()) {
+        Napi::Buffer<unsigned char> buf = info[2].As<Napi::Buffer<unsigned char>>();
+        gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 1);
+    }
+
+    return env.Null();
+}
+
+Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    Napi::Array arr = Napi::Array::New(env, data.realtime_trip_updates.size());
+    for (size_t i = 0; i < data.realtime_trip_updates.size(); ++i) {
+        const auto& tu = data.realtime_trip_updates[i];
+        Napi::Object obj = Napi::Object::New(env);
+
+        Napi::Object trip = Napi::Object::New(env);
+        trip.Set("trip_id", tu.trip.trip_id);
+        trip.Set("route_id", tu.trip.route_id);
+        trip.Set("direction_id", tu.trip.direction_id);
+        trip.Set("start_time", tu.trip.start_time);
+        trip.Set("start_date", tu.trip.start_date);
+        trip.Set("schedule_relationship", tu.trip.schedule_relationship);
+        obj.Set("trip", trip);
+
+        Napi::Object vehicle = Napi::Object::New(env);
+        vehicle.Set("id", tu.vehicle.id);
+        vehicle.Set("label", tu.vehicle.label);
+        vehicle.Set("license_plate", tu.vehicle.license_plate);
+        obj.Set("vehicle", vehicle);
+
+        Napi::Array stus = Napi::Array::New(env, tu.stop_time_updates.size());
+        for (size_t j = 0; j < tu.stop_time_updates.size(); ++j) {
+            const auto& stu = tu.stop_time_updates[j];
+            Napi::Object stu_obj = Napi::Object::New(env);
+            stu_obj.Set("stop_sequence", stu.stop_sequence);
+            stu_obj.Set("stop_id", stu.stop_id);
+            stu_obj.Set("arrival_delay", stu.arrival_delay);
+            stu_obj.Set("arrival_time", stu.arrival_time);
+            stu_obj.Set("departure_delay", stu.departure_delay);
+            stu_obj.Set("departure_time", stu.departure_time);
+            stu_obj.Set("schedule_relationship", stu.schedule_relationship);
+            stus[j] = stu_obj;
+        }
+        obj.Set("stop_time_updates", stus);
+        obj.Set("timestamp", (double)tu.timestamp); // JS Numbers are doubles, limited precision for uint64 but usually fine for timestamps
+        obj.Set("delay", tu.delay);
+
+        arr[i] = obj;
+    }
+    return arr;
+}
+
+Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    Napi::Array arr = Napi::Array::New(env, data.realtime_vehicle_positions.size());
+    for (size_t i = 0; i < data.realtime_vehicle_positions.size(); ++i) {
+        const auto& vp = data.realtime_vehicle_positions[i];
+        Napi::Object obj = Napi::Object::New(env);
+
+        Napi::Object trip = Napi::Object::New(env);
+        trip.Set("trip_id", vp.trip.trip_id);
+        trip.Set("route_id", vp.trip.route_id);
+        trip.Set("direction_id", vp.trip.direction_id);
+        trip.Set("start_time", vp.trip.start_time);
+        trip.Set("start_date", vp.trip.start_date);
+        trip.Set("schedule_relationship", vp.trip.schedule_relationship);
+        obj.Set("trip", trip);
+
+        Napi::Object vehicle = Napi::Object::New(env);
+        vehicle.Set("id", vp.vehicle.id);
+        vehicle.Set("label", vp.vehicle.label);
+        vehicle.Set("license_plate", vp.vehicle.license_plate);
+        obj.Set("vehicle", vehicle);
+
+        Napi::Object position = Napi::Object::New(env);
+        position.Set("latitude", vp.position.latitude);
+        position.Set("longitude", vp.position.longitude);
+        position.Set("bearing", vp.position.bearing);
+        position.Set("odometer", vp.position.odometer);
+        position.Set("speed", vp.position.speed);
+        obj.Set("position", position);
+
+        obj.Set("current_stop_sequence", vp.current_stop_sequence);
+        obj.Set("stop_id", vp.stop_id);
+        obj.Set("current_status", vp.current_status);
+        obj.Set("timestamp", (double)vp.timestamp);
+        obj.Set("congestion_level", vp.congestion_level);
+        obj.Set("occupancy_status", vp.occupancy_status);
+
+        arr[i] = obj;
+    }
+    return arr;
+}
+
+Napi::Value GTFSAddon::GetRealtimeAlerts(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    Napi::Array arr = Napi::Array::New(env, data.realtime_alerts.size());
+    for (size_t i = 0; i < data.realtime_alerts.size(); ++i) {
+        const auto& a = data.realtime_alerts[i];
+        Napi::Object obj = Napi::Object::New(env);
+
+        // Active periods omitted for brevity/complexity mapping for now
+
+        obj.Set("cause", a.cause);
+        obj.Set("effect", a.effect);
+        obj.Set("url", a.url);
+        obj.Set("header_text", a.header_text);
+        obj.Set("description_text", a.description_text);
+
+        arr[i] = obj;
     }
     return arr;
 }
