@@ -212,8 +212,9 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         }
 
         if (entity.has_alert) {
-            al_ctx.current_alert.cause = std::to_string(entity.alert.cause);
-            al_ctx.current_alert.effect = std::to_string(entity.alert.effect);
+            al_ctx.current_alert.cause = entity.alert.cause;
+            al_ctx.current_alert.effect = entity.alert.effect;
+            al_ctx.current_alert.severity_level = entity.alert.severity_level;
             al_ctx.data->realtime_alerts.push_back(al_ctx.current_alert);
         }
 

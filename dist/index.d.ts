@@ -1,3 +1,128 @@
+export declare enum RouteType {
+    Tram = 0,
+    Subway = 1,
+    Rail = 2,
+    Bus = 3,
+    Ferry = 4,
+    CableTram = 5,
+    AerialLift = 6,
+    Funicular = 7,
+    Trolleybus = 11,
+    Monorail = 12
+}
+export declare enum LocationType {
+    Stop = 0,
+    Station = 1,
+    EntranceExit = 2,
+    GenericNode = 3,
+    BoardingArea = 4
+}
+export declare enum WheelchairBoarding {
+    NoInfo = 0,
+    Accessible = 1,
+    NotAccessible = 2
+}
+export declare enum PickupType {
+    Regular = 0,
+    None = 1,
+    Phone = 2,
+    Driver = 3
+}
+export declare enum DropOffType {
+    Regular = 0,
+    None = 1,
+    Phone = 2,
+    Driver = 3
+}
+export declare enum ContinuousPickup {
+    Continuous = 0,
+    None = 1,
+    Phone = 2,
+    Driver = 3
+}
+export declare enum ContinuousDropOff {
+    Continuous = 0,
+    None = 1,
+    Phone = 2,
+    Driver = 3
+}
+export declare enum WheelchairAccessible {
+    NoInfo = 0,
+    Accessible = 1,
+    NotAccessible = 2
+}
+export declare enum BikesAllowed {
+    NoInfo = 0,
+    Allowed = 1,
+    NotAllowed = 2
+}
+export declare enum TripScheduleRelationship {
+    SCHEDULED = 0,
+    ADDED = 1,
+    UNSCHEDULED = 2,
+    CANCELED = 3,
+    REPLACEMENT = 5
+}
+export declare enum StopTimeScheduleRelationship {
+    SCHEDULED = 0,
+    SKIPPED = 1,
+    NO_DATA = 2,
+    UNSCHEDULED = 3
+}
+export declare enum VehicleStopStatus {
+    INCOMING_AT = 0,
+    STOPPED_AT = 1,
+    IN_TRANSIT_TO = 2
+}
+export declare enum CongestionLevel {
+    UNKNOWN_CONGESTION_LEVEL = 0,
+    RUNNING_SMOOTHLY = 1,
+    STOP_AND_GO = 2,
+    CONGESTION = 3,
+    SEVERE_CONGESTION = 4
+}
+export declare enum OccupancyStatus {
+    EMPTY = 0,
+    MANY_SEATS_AVAILABLE = 1,
+    FEW_SEATS_AVAILABLE = 2,
+    STANDING_ROOM_ONLY = 3,
+    CRUSHED_STANDING_ROOM_ONLY = 4,
+    FULL = 5,
+    NOT_ACCEPTING_PASSENGERS = 6
+}
+export declare enum AlertCause {
+    UNKNOWN_CAUSE = 1,
+    OTHER_CAUSE = 2,
+    TECHNICAL_PROBLEM = 3,
+    STRIKE = 4,
+    DEMONSTRATION = 5,
+    ACCIDENT = 6,
+    HOLIDAY = 7,
+    WEATHER = 8,
+    MAINTENANCE = 9,
+    CONSTRUCTION = 10,
+    POLICE_ACTIVITY = 11,
+    MEDICAL_EMERGENCY = 12
+}
+export declare enum AlertEffect {
+    NO_SERVICE = 1,
+    REDUCED_SERVICE = 2,
+    SIGNIFICANT_DELAYS = 3,
+    DETOUR = 4,
+    ADDITIONAL_SERVICE = 5,
+    MODIFIED_SERVICE = 6,
+    OTHER_EFFECT = 7,
+    UNKNOWN_EFFECT = 8,
+    STOP_MOVED = 9,
+    NO_EFFECT = 10,
+    ACCESSIBILITY_ISSUE = 11
+}
+export declare enum AlertSeverityLevel {
+    UNKNOWN_SEVERITY = 1,
+    INFO = 2,
+    WARNING = 3,
+    SEVERE = 4
+}
 export interface Agency {
     agency_id: string;
     agency_name: string;
@@ -14,10 +139,12 @@ export interface Route {
     route_short_name: string;
     route_long_name: string;
     route_desc: string;
-    route_type: number;
+    route_type: RouteType;
     route_url: string;
     route_color: string;
     route_text_color: string;
+    continuous_pickup: ContinuousPickup;
+    continuous_drop_off: ContinuousDropOff;
 }
 export interface Stop {
     stop_id: string;
@@ -28,10 +155,10 @@ export interface Stop {
     stop_lon: number;
     zone_id: string;
     stop_url: string;
-    location_type: number;
+    location_type: LocationType;
     parent_station: string;
     stop_timezone: string;
-    wheelchair_boarding: number;
+    wheelchair_boarding: WheelchairBoarding;
     level_id: string;
     platform_code: string;
 }
@@ -42,10 +169,12 @@ export interface StopTime {
     departure_time: number;
     stop_sequence: number;
     stop_headsign: string;
-    pickup_type: number;
-    drop_off_type: number;
+    pickup_type: PickupType;
+    drop_off_type: DropOffType;
     shape_dist_traveled: number;
     timepoint: number;
+    continuous_pickup: ContinuousPickup;
+    continuous_drop_off: ContinuousDropOff;
 }
 export interface FeedInfo {
     feed_publisher_name: string;
@@ -67,8 +196,8 @@ export interface Trip {
     direction_id: number;
     block_id: string;
     shape_id: string;
-    wheelchair_accessible: number;
-    bikes_allowed: number;
+    wheelchair_accessible: WheelchairAccessible;
+    bikes_allowed: BikesAllowed;
 }
 export interface Shape {
     shape_id: string;
@@ -101,7 +230,7 @@ export interface RealtimeTripUpdate {
         direction_id: number;
         start_time: string;
         start_date: string;
-        schedule_relationship: number;
+        schedule_relationship: TripScheduleRelationship;
     };
     vehicle: {
         id: string;
@@ -115,7 +244,7 @@ export interface RealtimeTripUpdate {
         arrival_time: number;
         departure_delay: number;
         departure_time: number;
-        schedule_relationship: number;
+        schedule_relationship: StopTimeScheduleRelationship;
     }[];
     timestamp: number;
     delay: number;
@@ -127,7 +256,7 @@ export interface RealtimeVehiclePosition {
         direction_id: number;
         start_time: string;
         start_date: string;
-        schedule_relationship: number;
+        schedule_relationship: TripScheduleRelationship;
     };
     vehicle: {
         id: string;
@@ -143,17 +272,18 @@ export interface RealtimeVehiclePosition {
     };
     current_stop_sequence: number;
     stop_id: string;
-    current_status: number;
+    current_status: VehicleStopStatus;
     timestamp: number;
-    congestion_level: number;
-    occupancy_status: number;
+    congestion_level: CongestionLevel;
+    occupancy_status: OccupancyStatus;
 }
 export interface RealtimeAlert {
-    cause: string;
-    effect: string;
+    cause: AlertCause;
+    effect: AlertEffect;
     url: string;
     header_text: string;
     description_text: string;
+    severity_level: AlertSeverityLevel;
 }
 export interface StopTimeQuery {
     stop_id?: string;
@@ -186,6 +316,7 @@ export declare class GTFS {
     getCalendars(): Calendar[];
     getCalendarDates(): CalendarDate[];
     updateRealtime(alerts: Buffer, tripUpdates: Buffer, vehiclePositions: Buffer): void;
+    updateRealtimeFromUrl(alertsUrl?: string, tripUpdatesUrl?: string, vehiclePositionsUrl?: string): Promise<void>;
     getRealtimeTripUpdates(): RealtimeTripUpdate[];
     getRealtimeVehiclePositions(): RealtimeVehiclePosition[];
     getRealtimeAlerts(): RealtimeAlert[];

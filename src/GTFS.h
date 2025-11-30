@@ -85,6 +85,8 @@ struct Route {
     std::string route_url;
     std::string route_color;
     std::string route_text_color;
+    int continuous_pickup;
+    int continuous_drop_off;
 };
 
 struct Stop {
@@ -115,6 +117,8 @@ struct StopTime {
     int drop_off_type;
     double shape_dist_traveled;
     int timepoint;
+    int continuous_pickup;
+    int continuous_drop_off;
 };
 
 struct Trip {
@@ -210,11 +214,12 @@ struct RealtimeAlert {
     std::vector<std::string> active_period_start;
     std::vector<std::string> active_period_end;
     // Simplified for now, complex to map all EntitySelectors
-    std::string cause;
-    std::string effect;
+    int cause;
+    int effect;
     std::string url;
     std::string header_text;
     std::string description_text;
+    int severity_level;
 };
 
 class GTFSData {

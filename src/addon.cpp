@@ -248,6 +248,8 @@ Napi::Value GTFSAddon::GetRoutes(const Napi::CallbackInfo& info) {
         obj.Set("route_url", r.route_url);
         obj.Set("route_color", r.route_color);
         obj.Set("route_text_color", r.route_text_color);
+        obj.Set("continuous_pickup", r.continuous_pickup);
+        obj.Set("continuous_drop_off", r.continuous_drop_off);
         arr[i++] = obj;
     }
     return arr;
@@ -388,6 +390,7 @@ Napi::Value GTFSAddon::GetRealtimeAlerts(const Napi::CallbackInfo& info) {
         obj.Set("url", a.url);
         obj.Set("header_text", a.header_text);
         obj.Set("description_text", a.description_text);
+        obj.Set("severity_level", a.severity_level);
 
         arr[i] = obj;
     }
@@ -477,6 +480,8 @@ Napi::Value GTFSAddon::GetStopTimesForTrip(const Napi::CallbackInfo& info) {
         obj.Set("drop_off_type", it->drop_off_type);
         obj.Set("shape_dist_traveled", it->shape_dist_traveled);
         obj.Set("timepoint", it->timepoint);
+        obj.Set("continuous_pickup", it->continuous_pickup);
+        obj.Set("continuous_drop_off", it->continuous_drop_off);
         arr[i++] = obj;
     }
     return arr;
@@ -663,6 +668,8 @@ Napi::Value GTFSAddon::QueryStopTimes(const Napi::CallbackInfo& info) {
         obj.Set("drop_off_type", st->drop_off_type);
         obj.Set("shape_dist_traveled", st->shape_dist_traveled);
         obj.Set("timepoint", st->timepoint);
+        obj.Set("continuous_pickup", st->continuous_pickup);
+        obj.Set("continuous_drop_off", st->continuous_drop_off);
         arr[i] = obj;
     }
     return arr;
