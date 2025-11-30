@@ -279,42 +279,39 @@ export interface CalendarDate {
     exception_type: number;
 }
 
+export interface RealtimeStopTimeUpdate {
+    stop_sequence: number;
+    stop_id: string;
+    arrival_delay: number;
+    arrival_time: number;
+    departure_delay: number;
+    departure_time: number;
+    schedule_relationship: StopTimeScheduleRelationship;
+}
+
+export interface RealtimeUpdateTripInfo {
+    trip_id: string;
+    route_id: string;
+    direction_id: number;
+    start_time: string;
+    start_date: string;
+    schedule_relationship: TripScheduleRelationship;
+}
+
 export interface RealtimeTripUpdate {
-    trip: {
-        trip_id: string;
-        route_id: string;
-        direction_id: number;
-        start_time: string;
-        start_date: string;
-        schedule_relationship: TripScheduleRelationship;
-    };
+    trip: RealtimeUpdateTripInfo;
     vehicle: {
         id: string;
         label: string;
         license_plate: string;
     };
-    stop_time_updates: {
-        stop_sequence: number;
-        stop_id: string;
-        arrival_delay: number;
-        arrival_time: number;
-        departure_delay: number;
-        departure_time: number;
-        schedule_relationship: StopTimeScheduleRelationship;
-    }[];
+    stop_time_updates: RealtimeStopTimeUpdate[];
     timestamp: number;
     delay: number;
 }
 
 export interface RealtimeVehiclePosition {
-    trip: {
-        trip_id: string;
-        route_id: string;
-        direction_id: number;
-        start_time: string;
-        start_date: string;
-        schedule_relationship: TripScheduleRelationship;
-    };
+    trip: RealtimeUpdateTripInfo;
     vehicle: {
         id: string;
         label: string;
