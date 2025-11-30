@@ -4,6 +4,5 @@ build/
 *.tlog
 *.log
 .DS_Store
-dist/
 .idea
 package-lock.json

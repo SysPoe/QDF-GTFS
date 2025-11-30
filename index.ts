@@ -1,14 +1,21 @@
 import * as https from 'https';
 import * as fs from 'fs';
+import { createRequire } from 'module';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const r = createRequire(import.meta.url);
 
 let GTFSAddon: any;
 try {
-    const r = (global as any).require || (module as any).require;
     try {
-         const binding = r('./build/Release/gtfs_addon.node');
+         const binding = r(path.join(__dirname, './build/Release/gtfs_addon.node'));
          GTFSAddon = binding.GTFSAddon;
     } catch(e) {
-         const binding = r('../build/Release/gtfs_addon.node');
+         const binding = r(path.join(__dirname, '../build/Release/gtfs_addon.node'));
          GTFSAddon = binding.GTFSAddon;
     }
 } catch (e) {
