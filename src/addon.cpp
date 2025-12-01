@@ -303,10 +303,16 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
         Napi::Object trip = Napi::Object::New(env);
         trip.Set("trip_id", tu.trip.trip_id);
         trip.Set("route_id", tu.trip.route_id);
-        trip.Set("direction_id", tu.trip.direction_id);
+
+        if (tu.trip.direction_id != -1) trip.Set("direction_id", tu.trip.direction_id);
+        else trip.Set("direction_id", env.Null());
+
         trip.Set("start_time", tu.trip.start_time);
         trip.Set("start_date", tu.trip.start_date);
-        trip.Set("schedule_relationship", tu.trip.schedule_relationship);
+
+        if (tu.trip.schedule_relationship != -1) trip.Set("schedule_relationship", tu.trip.schedule_relationship);
+        else trip.Set("schedule_relationship", env.Null());
+
         obj.Set("trip", trip);
 
         Napi::Object vehicle = Napi::Object::New(env);
@@ -319,19 +325,42 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
         for (size_t j = 0; j < tu.stop_time_updates.size(); ++j) {
             const auto& stu = tu.stop_time_updates[j];
             Napi::Object stu_obj = Napi::Object::New(env);
-            stu_obj.Set("stop_sequence", stu.stop_sequence);
+            if (stu.stop_sequence != -1) stu_obj.Set("stop_sequence", stu.stop_sequence);
+            else stu_obj.Set("stop_sequence", env.Null());
+
             stu_obj.Set("stop_id", stu.stop_id);
             stu_obj.Set("trip_id", stu.trip_id);
-            stu_obj.Set("arrival_delay", stu.arrival_delay);
-            stu_obj.Set("arrival_time", stu.arrival_time);
-            stu_obj.Set("departure_delay", stu.departure_delay);
-            stu_obj.Set("departure_time", stu.departure_time);
-            stu_obj.Set("schedule_relationship", stu.schedule_relationship);
+
+            if (stu.arrival_delay != -2147483648) stu_obj.Set("arrival_delay", stu.arrival_delay);
+            else stu_obj.Set("arrival_delay", env.Null());
+
+            if (stu.arrival_time != -1) stu_obj.Set("arrival_time", stu.arrival_time);
+            else stu_obj.Set("arrival_time", env.Null());
+
+            if (stu.arrival_uncertainty != -1) stu_obj.Set("arrival_uncertainty", stu.arrival_uncertainty);
+            else stu_obj.Set("arrival_uncertainty", env.Null());
+
+            if (stu.departure_delay != -2147483648) stu_obj.Set("departure_delay", stu.departure_delay);
+            else stu_obj.Set("departure_delay", env.Null());
+
+            if (stu.departure_time != -1) stu_obj.Set("departure_time", stu.departure_time);
+            else stu_obj.Set("departure_time", env.Null());
+
+            if (stu.departure_uncertainty != -1) stu_obj.Set("departure_uncertainty", stu.departure_uncertainty);
+            else stu_obj.Set("departure_uncertainty", env.Null());
+
+            if (stu.schedule_relationship != -1) stu_obj.Set("schedule_relationship", stu.schedule_relationship);
+            else stu_obj.Set("schedule_relationship", env.Null());
+
             stus[j] = stu_obj;
         }
         obj.Set("stop_time_updates", stus);
-        obj.Set("timestamp", (double)tu.timestamp); // JS Numbers are doubles, limited precision for uint64 but usually fine for timestamps
-        obj.Set("delay", tu.delay);
+
+        if (tu.timestamp != 0) obj.Set("timestamp", (double)tu.timestamp);
+        else obj.Set("timestamp", env.Null());
+
+        if (tu.delay != -2147483648) obj.Set("delay", tu.delay);
+        else obj.Set("delay", env.Null());
 
         arr[i] = obj;
     }
@@ -351,10 +380,16 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
         Napi::Object trip = Napi::Object::New(env);
         trip.Set("trip_id", vp.trip.trip_id);
         trip.Set("route_id", vp.trip.route_id);
-        trip.Set("direction_id", vp.trip.direction_id);
+
+        if (vp.trip.direction_id != -1) trip.Set("direction_id", vp.trip.direction_id);
+        else trip.Set("direction_id", env.Null());
+
         trip.Set("start_time", vp.trip.start_time);
         trip.Set("start_date", vp.trip.start_date);
-        trip.Set("schedule_relationship", vp.trip.schedule_relationship);
+
+        if (vp.trip.schedule_relationship != -1) trip.Set("schedule_relationship", vp.trip.schedule_relationship);
+        else trip.Set("schedule_relationship", env.Null());
+
         obj.Set("trip", trip);
 
         Napi::Object vehicle = Napi::Object::New(env);
@@ -366,18 +401,37 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
         Napi::Object position = Napi::Object::New(env);
         position.Set("latitude", vp.position.latitude);
         position.Set("longitude", vp.position.longitude);
-        position.Set("bearing", vp.position.bearing);
-        position.Set("odometer", vp.position.odometer);
-        position.Set("speed", vp.position.speed);
+
+        if (vp.position.bearing != -1.0f) position.Set("bearing", vp.position.bearing);
+        else position.Set("bearing", env.Null());
+
+        if (vp.position.odometer != -1.0) position.Set("odometer", vp.position.odometer);
+        else position.Set("odometer", env.Null());
+
+        if (vp.position.speed != -1.0f) position.Set("speed", vp.position.speed);
+        else position.Set("speed", env.Null());
+
         obj.Set("position", position);
 
-        obj.Set("current_stop_sequence", vp.current_stop_sequence);
+        if (vp.current_stop_sequence != -1) obj.Set("current_stop_sequence", vp.current_stop_sequence);
+        else obj.Set("current_stop_sequence", env.Null());
+
         obj.Set("stop_id", vp.stop_id);
-        obj.Set("current_status", vp.current_status);
-        obj.Set("timestamp", (double)vp.timestamp);
-        obj.Set("congestion_level", vp.congestion_level);
-        obj.Set("occupancy_status", vp.occupancy_status);
-        obj.Set("occupancy_percentage", vp.occupancy_percentage);
+
+        if (vp.current_status != -1) obj.Set("current_status", vp.current_status);
+        else obj.Set("current_status", env.Null());
+
+        if (vp.timestamp != 0) obj.Set("timestamp", (double)vp.timestamp);
+        else obj.Set("timestamp", env.Null());
+
+        if (vp.congestion_level != -1) obj.Set("congestion_level", vp.congestion_level);
+        else obj.Set("congestion_level", env.Null());
+
+        if (vp.occupancy_status != -1) obj.Set("occupancy_status", vp.occupancy_status);
+        else obj.Set("occupancy_status", env.Null());
+
+        if (vp.occupancy_percentage != -1) obj.Set("occupancy_percentage", vp.occupancy_percentage);
+        else obj.Set("occupancy_percentage", env.Null());
 
         arr[i] = obj;
     }
@@ -396,12 +450,18 @@ Napi::Value GTFSAddon::GetRealtimeAlerts(const Napi::CallbackInfo& info) {
 
         // Active periods omitted for brevity/complexity mapping for now
 
-        obj.Set("cause", a.cause);
-        obj.Set("effect", a.effect);
+        if (a.cause != -1) obj.Set("cause", a.cause);
+        else obj.Set("cause", env.Null());
+
+        if (a.effect != -1) obj.Set("effect", a.effect);
+        else obj.Set("effect", env.Null());
+
         obj.Set("url", a.url);
         obj.Set("header_text", a.header_text);
         obj.Set("description_text", a.description_text);
-        obj.Set("severity_level", a.severity_level);
+
+        if (a.severity_level != -1) obj.Set("severity_level", a.severity_level);
+        else obj.Set("severity_level", env.Null());
 
         arr[i] = obj;
     }

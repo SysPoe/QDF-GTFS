@@ -119,6 +119,12 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         entity.trip_update.trip.start_date.funcs.decode = decode_string;
         entity.trip_update.trip.start_date.arg = &tu_ctx.current_update.trip.start_date;
 
+        // Trip Descriptor Optionals
+        // Need to check after decode if they were present?
+        // Or can we check in decode callback?
+        // Nanopb structs have has_ flags. We can check them *after* pb_decode call of the parent message.
+        // We are currently setting callbacks *before* decode.
+
         entity.trip_update.vehicle.id.funcs.decode = decode_string;
         entity.trip_update.vehicle.id.arg = &tu_ctx.current_update.vehicle.id;
 
@@ -144,13 +150,41 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
             stu.trip_id = inner_ctx->current_update.trip.trip_id;
 
             if (pb_stu.has_arrival) {
-                stu.arrival_delay = pb_stu.arrival.delay;
-                stu.arrival_time = pb_stu.arrival.time;
+                if (pb_stu.arrival.has_delay) stu.arrival_delay = pb_stu.arrival.delay;
+                else stu.arrival_delay = -2147483648;
+
+                if (pb_stu.arrival.has_time) stu.arrival_time = pb_stu.arrival.time;
+                else stu.arrival_time = -1;
+
+                if (pb_stu.arrival.has_uncertainty) stu.arrival_uncertainty = pb_stu.arrival.uncertainty;
+                else stu.arrival_uncertainty = -1;
+            } else {
+                stu.arrival_time = -1;
+                stu.arrival_delay = -2147483648;
+                stu.arrival_uncertainty = -1;
             }
+
             if (pb_stu.has_departure) {
-                stu.departure_delay = pb_stu.departure.delay;
-                stu.departure_time = pb_stu.departure.time;
+                if (pb_stu.departure.has_delay) stu.departure_delay = pb_stu.departure.delay;
+                else stu.departure_delay = -2147483648;
+
+                if (pb_stu.departure.has_time) stu.departure_time = pb_stu.departure.time;
+                else stu.departure_time = -1;
+
+                if (pb_stu.departure.has_uncertainty) stu.departure_uncertainty = pb_stu.departure.uncertainty;
+                else stu.departure_uncertainty = -1;
+            } else {
+                stu.departure_time = -1;
+                stu.departure_delay = -2147483648;
+                stu.departure_uncertainty = -1;
             }
+
+            if (pb_stu.has_schedule_relationship) stu.schedule_relationship = pb_stu.schedule_relationship;
+            else stu.schedule_relationship = -1;
+
+            if (pb_stu.has_stop_sequence) stu.stop_sequence = pb_stu.stop_sequence;
+            else stu.stop_sequence = -1;
+
             inner_ctx->current_update.stop_time_updates.push_back(stu);
             return true;
         };
@@ -196,16 +230,20 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         if (entity.has_trip_update) {
             tu_ctx.current_update.update_id = entity_id;
             tu_ctx.current_update.is_deleted = entity.is_deleted;
-            tu_ctx.current_update.timestamp = entity.trip_update.timestamp;
-            tu_ctx.current_update.delay = entity.trip_update.delay;
-            tu_ctx.current_update.trip.direction_id = entity.trip_update.trip.direction_id;
-            tu_ctx.current_update.trip.schedule_relationship = entity.trip_update.trip.schedule_relationship;
+
+            if (entity.trip_update.has_timestamp) tu_ctx.current_update.timestamp = entity.trip_update.timestamp;
+            // else 0 (sentinel)
+
+            if (entity.trip_update.has_delay) tu_ctx.current_update.delay = entity.trip_update.delay;
+            else tu_ctx.current_update.delay = -2147483648;
+
+            if (entity.trip_update.trip.has_direction_id) tu_ctx.current_update.trip.direction_id = entity.trip_update.trip.direction_id;
+            else tu_ctx.current_update.trip.direction_id = -1;
+
+            if (entity.trip_update.trip.has_schedule_relationship) tu_ctx.current_update.trip.schedule_relationship = entity.trip_update.trip.schedule_relationship;
+            else tu_ctx.current_update.trip.schedule_relationship = -1;
 
             // Retroactively set trip_id on stop_time_updates if it wasn't available during their parse
-            // (parsing order is not guaranteed by protobuf spec, though usually consistent)
-            // Actually, nanopb parses sequentially. But trip_id might be parsed AFTER stop_time_updates
-            // if fields are out of order in wire format.
-            // To be safe, update them all here.
             for(auto& stu : tu_ctx.current_update.stop_time_updates) {
                 if(stu.trip_id.empty()) {
                     stu.trip_id = tu_ctx.current_update.trip.trip_id;
@@ -218,20 +256,43 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         if (entity.has_vehicle) {
              vp_ctx.current_pos.update_id = entity_id;
              vp_ctx.current_pos.is_deleted = entity.is_deleted;
-             vp_ctx.current_pos.current_stop_sequence = entity.vehicle.current_stop_sequence;
-             vp_ctx.current_pos.current_status = entity.vehicle.current_status;
-             vp_ctx.current_pos.timestamp = entity.vehicle.timestamp;
-             vp_ctx.current_pos.congestion_level = entity.vehicle.congestion_level;
-             vp_ctx.current_pos.occupancy_status = entity.vehicle.occupancy_status;
-             vp_ctx.current_pos.occupancy_percentage = entity.vehicle.occupancy_percentage;
-             vp_ctx.current_pos.trip.direction_id = entity.vehicle.trip.direction_id;
-             vp_ctx.current_pos.trip.schedule_relationship = entity.vehicle.trip.schedule_relationship;
+
+             if (entity.vehicle.has_current_stop_sequence) vp_ctx.current_pos.current_stop_sequence = entity.vehicle.current_stop_sequence;
+             else vp_ctx.current_pos.current_stop_sequence = -1;
+
+             if (entity.vehicle.has_current_status) vp_ctx.current_pos.current_status = entity.vehicle.current_status;
+             else vp_ctx.current_pos.current_status = -1;
+
+             if (entity.vehicle.has_timestamp) vp_ctx.current_pos.timestamp = entity.vehicle.timestamp;
+             // else 0
+
+             if (entity.vehicle.has_congestion_level) vp_ctx.current_pos.congestion_level = entity.vehicle.congestion_level;
+             else vp_ctx.current_pos.congestion_level = -1;
+
+             if (entity.vehicle.has_occupancy_status) vp_ctx.current_pos.occupancy_status = entity.vehicle.occupancy_status;
+             else vp_ctx.current_pos.occupancy_status = -1;
+
+             if (entity.vehicle.has_occupancy_percentage) vp_ctx.current_pos.occupancy_percentage = entity.vehicle.occupancy_percentage;
+             else vp_ctx.current_pos.occupancy_percentage = -1;
+
+             if (entity.vehicle.trip.has_direction_id) vp_ctx.current_pos.trip.direction_id = entity.vehicle.trip.direction_id;
+             else vp_ctx.current_pos.trip.direction_id = -1;
+
+             if (entity.vehicle.trip.has_schedule_relationship) vp_ctx.current_pos.trip.schedule_relationship = entity.vehicle.trip.schedule_relationship;
+             else vp_ctx.current_pos.trip.schedule_relationship = -1;
+
              if (entity.vehicle.has_position) {
                  vp_ctx.current_pos.position.latitude = entity.vehicle.position.latitude;
                  vp_ctx.current_pos.position.longitude = entity.vehicle.position.longitude;
-                 vp_ctx.current_pos.position.bearing = entity.vehicle.position.bearing;
-                 vp_ctx.current_pos.position.odometer = entity.vehicle.position.odometer;
-                 vp_ctx.current_pos.position.speed = entity.vehicle.position.speed;
+
+                 if (entity.vehicle.position.has_bearing) vp_ctx.current_pos.position.bearing = entity.vehicle.position.bearing;
+                 else vp_ctx.current_pos.position.bearing = -1.0f;
+
+                 if (entity.vehicle.position.has_odometer) vp_ctx.current_pos.position.odometer = entity.vehicle.position.odometer;
+                 else vp_ctx.current_pos.position.odometer = -1.0;
+
+                 if (entity.vehicle.position.has_speed) vp_ctx.current_pos.position.speed = entity.vehicle.position.speed;
+                 else vp_ctx.current_pos.position.speed = -1.0f;
              }
              vp_ctx.data->realtime_vehicle_positions.push_back(vp_ctx.current_pos);
         }
@@ -239,9 +300,16 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         if (entity.has_alert) {
             al_ctx.current_alert.update_id = entity_id;
             al_ctx.current_alert.is_deleted = entity.is_deleted;
-            al_ctx.current_alert.cause = entity.alert.cause;
-            al_ctx.current_alert.effect = entity.alert.effect;
-            al_ctx.current_alert.severity_level = entity.alert.severity_level;
+
+            if (entity.alert.has_cause) al_ctx.current_alert.cause = entity.alert.cause;
+            else al_ctx.current_alert.cause = -1;
+
+            if (entity.alert.has_effect) al_ctx.current_alert.effect = entity.alert.effect;
+            else al_ctx.current_alert.effect = -1;
+
+            if (entity.alert.has_severity_level) al_ctx.current_alert.severity_level = entity.alert.severity_level;
+            else al_ctx.current_alert.severity_level = -1;
+
             al_ctx.data->realtime_alerts.push_back(al_ctx.current_alert);
         }
 

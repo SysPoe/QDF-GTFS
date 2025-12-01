@@ -158,10 +158,10 @@ struct FeedInfo {
 struct RealtimeTripDescriptor {
     std::string trip_id;
     std::string route_id;
-    int direction_id;
+    int direction_id = -1;
     std::string start_time;
     std::string start_date;
-    int schedule_relationship;
+    int schedule_relationship = -1;
 };
 
 struct RealtimeVehicleDescriptor {
@@ -171,63 +171,78 @@ struct RealtimeVehicleDescriptor {
 };
 
 struct RealtimeStopTimeUpdate {
-    int stop_sequence;
+    int stop_sequence = -1;
     std::string stop_id;
     std::string trip_id;
-    int arrival_delay;
-    int64_t arrival_time;
-    int arrival_uncertainty;
-    int departure_delay;
-    int64_t departure_time;
-    int departure_uncertainty;
-    int schedule_relationship;
+    // 0 is a valid delay, need careful handling. Actually proto optional int32 defaults to 0 but has_ flag. We'll use INT_MIN or explicit logic? Let's use -999999 as sentinel for delay? No, delay can be negative. Let's use a struct or separate bool?
+    // For simplicity with JS null, we can use a pointer or std::optional-like approach,
+    // but sticking to simple sentinels for now.
+    // INT32_MIN is -2147483648. Unlikely for delay?
+    // Let's use a dedicated "undefined" value like -2147483648 for integers that can be negative.
+    // For unsigned or positive-only, -1 is fine.
+    int arrival_delay = -2147483648;
+    int64_t arrival_time = -1;
+    int arrival_uncertainty = -1;
+
+    int departure_delay = -2147483648;
+    int64_t departure_time = -1;
+    int departure_uncertainty = -1;
+
+    int schedule_relationship = -1;
 };
 
 struct RealtimeTripUpdate {
     std::string update_id;
-    bool is_deleted;
+    bool is_deleted = false;
     RealtimeTripDescriptor trip;
     RealtimeVehicleDescriptor vehicle;
     std::vector<RealtimeStopTimeUpdate> stop_time_updates;
-    uint64_t timestamp;
-    int delay;
+    uint64_t timestamp = 0; // 0 is technically 1970, but usually means missing in GTFS-RT context?
+    // Proto says: "If missing, the interval starts at minus infinity." for ranges.
+    // For timestamp: "If missing...".
+    // Let's use 0 as "missing" for uint64 timestamps since 1970 is unlikely valid for *realtime* data updates?
+    // Actually, let's allow 0 and use another way? No, 0 is fine for timestamp sentinel if we treat it as null.
+    // But Wait, 0 is valid. Let's use 0 for now as previously defined, but maybe we need a separate flag?
+    // Let's use 0 as sentinel for timestamp.
+
+    int delay = -2147483648;
 };
 
 struct RealtimePosition {
-    float latitude;
-    float longitude;
-    float bearing;
-    double odometer;
-    float speed;
+    float latitude = 0.0f;
+    float longitude = 0.0f;
+    float bearing = -1.0f;
+    double odometer = -1.0;
+    float speed = -1.0f;
 };
 
 struct RealtimeVehiclePosition {
     std::string update_id;
-    bool is_deleted;
+    bool is_deleted = false;
     RealtimeTripDescriptor trip;
     RealtimeVehicleDescriptor vehicle;
     RealtimePosition position;
-    int current_stop_sequence;
+    int current_stop_sequence = -1;
     std::string stop_id;
-    int current_status;
-    uint64_t timestamp;
-    int congestion_level;
-    int occupancy_status;
-    int occupancy_percentage;
+    int current_status = -1;
+    uint64_t timestamp = 0;
+    int congestion_level = -1;
+    int occupancy_status = -1;
+    int occupancy_percentage = -1;
 };
 
 struct RealtimeAlert {
     std::string update_id;
-    bool is_deleted;
+    bool is_deleted = false;
     std::vector<std::string> active_period_start;
     std::vector<std::string> active_period_end;
     // Simplified for now, complex to map all EntitySelectors
-    int cause;
-    int effect;
+    int cause = -1;
+    int effect = -1;
     std::string url;
     std::string header_text;
     std::string description_text;
-    int severity_level;
+    int severity_level = -1;
 };
 
 class GTFSData {
