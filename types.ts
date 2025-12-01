@@ -256,23 +256,25 @@ export interface CalendarDate {
 }
 
 export interface RealtimeStopTimeUpdate {
-    stop_sequence: number;
+    stop_sequence: number | null;
     stop_id: string;
     trip_id: string;
-    arrival_delay: number;
-    arrival_time: number;
-    departure_delay: number;
-    departure_time: number;
-    schedule_relationship: StopTimeScheduleRelationship;
+    arrival_delay: number | null;
+    arrival_time: number | null;
+    arrival_uncertainty: number | null;
+    departure_delay: number | null;
+    departure_time: number | null;
+    departure_uncertainty: number | null;
+    schedule_relationship: StopTimeScheduleRelationship | null;
 }
 
 export interface RealtimeUpdateTripInfo {
     trip_id: string;
     route_id: string;
-    direction_id: number;
+    direction_id: number | null;
     start_time: string;
     start_date: string;
-    schedule_relationship: TripScheduleRelationship;
+    schedule_relationship: TripScheduleRelationship | null;
 }
 
 export interface RealtimeTripUpdate {
@@ -285,8 +287,8 @@ export interface RealtimeTripUpdate {
         license_plate: string;
     };
     stop_time_updates: RealtimeStopTimeUpdate[];
-    timestamp: number;
-    delay: number;
+    timestamp: number | null;
+    delay: number | null;
 }
 
 export interface RealtimeVehiclePosition {
@@ -301,28 +303,28 @@ export interface RealtimeVehiclePosition {
     position: {
         latitude: number;
         longitude: number;
-        bearing: number;
-        odometer: number;
-        speed: number;
+        bearing: number | null;
+        odometer: number | null;
+        speed: number | null;
     };
-    current_stop_sequence: number;
+    current_stop_sequence: number | null;
     stop_id: string;
-    current_status: VehicleStopStatus;
-    timestamp: number;
-    congestion_level: CongestionLevel;
-    occupancy_status: OccupancyStatus;
-    occupancy_percentage: number;
+    current_status: VehicleStopStatus | null;
+    timestamp: number | null;
+    congestion_level: CongestionLevel | null;
+    occupancy_status: OccupancyStatus | null;
+    occupancy_percentage: number | null;
 }
 
 export interface RealtimeAlert {
     update_id: string;
     is_deleted: boolean;
-    cause: AlertCause;
-    effect: AlertEffect;
+    cause: AlertCause | null;
+    effect: AlertEffect | null;
     url: string;
     header_text: string;
     description_text: string;
-    severity_level: AlertSeverityLevel;
+    severity_level: AlertSeverityLevel | null;
 }
 
 export interface StopTimeQuery {
