@@ -299,3 +299,4 @@ export interface GTFSOptions {
     logger?: (msg: string) => void;
     ansi?: boolean;
 }
+export declare function formatTimestamp(ts?: number | null): string;

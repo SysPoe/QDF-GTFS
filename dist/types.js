@@ -142,3 +142,11 @@ export var AlertSeverityLevel;
     AlertSeverityLevel[AlertSeverityLevel["WARNING"] = 3] = "WARNING";
     AlertSeverityLevel[AlertSeverityLevel["SEVERE"] = 4] = "SEVERE";
 })(AlertSeverityLevel || (AlertSeverityLevel = {}));
+// Helper fns
+export function formatTimestamp(ts) {
+    if (ts === null || ts === undefined)
+        return "--:--";
+    let h = Math.floor(ts / 3600);
+    let m = Math.floor((ts % 3600) / 60);
+    return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+}

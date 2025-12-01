@@ -337,3 +337,11 @@ export interface GTFSOptions {
     logger?: (msg: string) => void;
     ansi?: boolean;
 }
+
+// Helper fns
+export function formatTimestamp(ts?: number | null): string {
+    if (ts === null || ts === undefined) return "--:--";
+    let h = Math.floor(ts / 3600);
+    let m = Math.floor((ts % 3600) / 60);
+    return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+}
