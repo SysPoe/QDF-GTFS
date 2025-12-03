@@ -310,8 +310,7 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
         trip.Set("start_time", tu.trip.start_time);
         trip.Set("start_date", tu.trip.start_date);
 
-        if (tu.trip.schedule_relationship != -1) trip.Set("schedule_relationship", tu.trip.schedule_relationship);
-        else trip.Set("schedule_relationship", env.Null());
+        trip.Set("schedule_relationship", tu.trip.schedule_relationship);
 
         obj.Set("trip", trip);
 
@@ -349,8 +348,7 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
             if (stu.departure_uncertainty != -1) stu_obj.Set("departure_uncertainty", stu.departure_uncertainty);
             else stu_obj.Set("departure_uncertainty", env.Null());
 
-            if (stu.schedule_relationship != -1) stu_obj.Set("schedule_relationship", stu.schedule_relationship);
-            else stu_obj.Set("schedule_relationship", env.Null());
+            stu_obj.Set("schedule_relationship", stu.schedule_relationship);
 
             stus[j] = stu_obj;
         }
@@ -387,8 +385,7 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
         trip.Set("start_time", vp.trip.start_time);
         trip.Set("start_date", vp.trip.start_date);
 
-        if (vp.trip.schedule_relationship != -1) trip.Set("schedule_relationship", vp.trip.schedule_relationship);
-        else trip.Set("schedule_relationship", env.Null());
+        trip.Set("schedule_relationship", vp.trip.schedule_relationship);
 
         obj.Set("trip", trip);
 

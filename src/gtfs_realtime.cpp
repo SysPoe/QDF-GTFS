@@ -180,7 +180,7 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
             }
 
             if (pb_stu.has_schedule_relationship) stu.schedule_relationship = pb_stu.schedule_relationship;
-            else stu.schedule_relationship = -1;
+            else stu.schedule_relationship = 0;
 
             if (pb_stu.has_stop_sequence) stu.stop_sequence = pb_stu.stop_sequence;
             else stu.stop_sequence = -1;
@@ -241,7 +241,7 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
             else tu_ctx.current_update.trip.direction_id = -1;
 
             if (entity.trip_update.trip.has_schedule_relationship) tu_ctx.current_update.trip.schedule_relationship = entity.trip_update.trip.schedule_relationship;
-            else tu_ctx.current_update.trip.schedule_relationship = -1;
+            else tu_ctx.current_update.trip.schedule_relationship = 0;
 
             // Retroactively set trip_id on stop_time_updates if it wasn't available during their parse
             for(auto& stu : tu_ctx.current_update.stop_time_updates) {
@@ -279,7 +279,7 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
              else vp_ctx.current_pos.trip.direction_id = -1;
 
              if (entity.vehicle.trip.has_schedule_relationship) vp_ctx.current_pos.trip.schedule_relationship = entity.vehicle.trip.schedule_relationship;
-             else vp_ctx.current_pos.trip.schedule_relationship = -1;
+             else vp_ctx.current_pos.trip.schedule_relationship = 0;
 
              if (entity.vehicle.has_position) {
                  vp_ctx.current_pos.position.latitude = entity.vehicle.position.latitude;
