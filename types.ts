@@ -265,7 +265,7 @@ export interface RealtimeStopTimeUpdate {
     departure_delay: number | null;
     departure_time: number | null;
     departure_uncertainty: number | null;
-    schedule_relationship: StopTimeScheduleRelationship | null;
+    schedule_relationship: StopTimeScheduleRelationship;
 }
 
 export interface RealtimeUpdateTripInfo {
@@ -274,7 +274,7 @@ export interface RealtimeUpdateTripInfo {
     direction_id: number | null;
     start_time: string;
     start_date: string;
-    schedule_relationship: TripScheduleRelationship | null;
+    schedule_relationship: TripScheduleRelationship;
 }
 
 export interface RealtimeTripUpdate {

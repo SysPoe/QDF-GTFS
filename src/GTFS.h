@@ -161,7 +161,7 @@ struct RealtimeTripDescriptor {
     int direction_id = -1;
     std::string start_time;
     std::string start_date;
-    int schedule_relationship = -1;
+    int schedule_relationship = 0;
 };
 
 struct RealtimeVehicleDescriptor {
@@ -188,7 +188,7 @@ struct RealtimeStopTimeUpdate {
     int64_t departure_time = -1;
     int departure_uncertainty = -1;
 
-    int schedule_relationship = -1;
+    int schedule_relationship = 0;
 };
 
 struct RealtimeTripUpdate {
