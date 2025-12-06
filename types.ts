@@ -338,6 +338,8 @@ export interface StopTimeQuery {
 export interface GTFSOptions {
     logger?: (msg: string) => void;
     ansi?: boolean;
+    cacheDir?: string;
+    cache?: boolean;
 }
 
 // Helper fns
