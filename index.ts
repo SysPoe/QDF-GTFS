@@ -63,7 +63,7 @@ function formatBytes(bytes: number): string {
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)).toFixed(2) + ' ' + sizes[i];
 }
 
 function formatDuration(seconds: number): string {
@@ -111,7 +111,7 @@ export class GTFS {
           const speedStr = `${formatBytes(speed)}/s`;
           const etaStr = `ETA ${formatDuration(eta)}`;
 
-          process.stdout.write(`\r[${bar}] ${percent.toFixed(1)}% | ${sizeStr} | ${speedStr} | ${etaStr} | ${task}`);
+          process.stdout.write(`\x1b[0K\r[${bar}] ${percent.toFixed(1)}% | ${sizeStr} | ${speedStr} | ${etaStr} | ${task}`);
           if (percent >= 100) {
               process.stdout.write('\n');
           }
