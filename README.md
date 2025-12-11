@@ -111,7 +111,3 @@ const alerts = gtfs.getRealtimeAlerts();
 - `getCalendars()`, `getCalendarDates()`
 - `getShapes()`
 - `getFeedInfo()`
-
-## License
-
-ISC
