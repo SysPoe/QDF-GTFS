@@ -21,7 +21,6 @@ bool decode_string(pb_istream_t *stream, const pb_field_t *field, void **arg) {
         return false;
     }
 
-    // Append to existing string or set it? usually set.
     str->assign(buffer.data(), len);
     return true;
 }
@@ -118,12 +117,6 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
 
         entity.trip_update.trip.start_date.funcs.decode = decode_string;
         entity.trip_update.trip.start_date.arg = &tu_ctx.current_update.trip.start_date;
-
-        // Trip Descriptor Optionals
-        // Need to check after decode if they were present?
-        // Or can we check in decode callback?
-        // Nanopb structs have has_ flags. We can check them *after* pb_decode call of the parent message.
-        // We are currently setting callbacks *before* decode.
 
         entity.trip_update.vehicle.id.funcs.decode = decode_string;
         entity.trip_update.vehicle.id.arg = &tu_ctx.current_update.vehicle.id;

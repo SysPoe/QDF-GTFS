@@ -3,8 +3,12 @@ export * from './types.js';
 export declare class GTFS {
     private addonInstance;
     private logger?;
+    private progressCallback?;
     private ansi;
+    private cacheDir?;
+    private cache;
     constructor(options?: GTFSOptions);
+    private showProgress;
     loadFromUrl(url: string): Promise<void>;
     loadFromPath(path: string): Promise<void>;
     loadFromBuffer(buffer: Buffer): Promise<void>;

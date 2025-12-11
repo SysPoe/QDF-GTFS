@@ -335,8 +335,18 @@ export interface StopTimeQuery {
     end_time?: number | string; // Seconds or HH:MM:SS
 }
 
+export interface ProgressInfo {
+    task: string;
+    total: number;
+    current: number;
+    percent: number;
+    speed?: number; // bytes/sec
+    eta?: number; // seconds
+}
+
 export interface GTFSOptions {
     logger?: (msg: string) => void;
+    progress?: (info: ProgressInfo) => void;
     ansi?: boolean;
     cacheDir?: string;
     cache?: boolean;

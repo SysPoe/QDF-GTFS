@@ -297,8 +297,19 @@ export interface StopTimeQuery {
     start_time?: number | string;
     end_time?: number | string;
 }
+export interface ProgressInfo {
+    task: string;
+    total: number;
+    current: number;
+    percent: number;
+    speed?: number;
+    eta?: number;
+}
 export interface GTFSOptions {
     logger?: (msg: string) => void;
+    progress?: (info: ProgressInfo) => void;
     ansi?: boolean;
+    cacheDir?: string;
+    cache?: boolean;
 }
 export declare function formatTimestamp(ts?: number | null): string;

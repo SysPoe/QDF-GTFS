@@ -9,6 +9,7 @@
 namespace gtfs {
 
 using LogFn = std::function<void(const std::string&)>;
+using ProgressFn = std::function<void(std::string task, int64_t current, int64_t total)>;
 
 // Helper to convert "HH:MM:SS" to seconds
 int parse_time_seconds(const std::string& time_str) {
@@ -29,7 +30,7 @@ std::vector<std::string> parse_csv_line(const std::string& line) {
         char c = line[i];
         if (c == '"') {
             if (inside_quotes && i + 1 < line.length() && line[i+1] == '"') {
-                cell += '"'; // unescape "" to "
+        cell += '"';
                 i++;
             } else {
                 inside_quotes = !inside_quotes;
@@ -157,10 +158,7 @@ size_t parse_routes(GTFSData& data, const std::string& content) {
         r.route_url = get_val(row, url_idx);
         r.route_color = get_val(row, color_idx);
         r.route_text_color = get_val(row, text_color_idx);
-        r.continuous_pickup = get_int(row, cont_pickup_idx, 1); // Default to 1 (No continuous pickup/dropoff)? Or 0?
-        // Spec says: "If this field is empty, it indicates that continuous stops are not available."
-        // 0=Continuous, 1=Not available, 2=Phone, 3=Driver.
-        // If empty, it means NOT available, so 1.
+        r.continuous_pickup = get_int(row, cont_pickup_idx, 1);
         r.continuous_drop_off = get_int(row, cont_drop_off_idx, 1);
         data.routes[r.route_id] = r;
         count++;
@@ -254,10 +252,13 @@ size_t parse_stops(GTFSData& data, const std::string& content) {
     return count;
 }
 
-size_t parse_stop_times(GTFSData& data, const std::string& content) {
+size_t parse_stop_times(GTFSData& data, const std::string& content, ProgressFn progress = nullptr, int64_t already_processed_bytes = 0, int64_t total_bytes = 0) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
+
+    int64_t current_bytes = already_processed_bytes + line.length() + 1; // +1 for newline
+
     if (line.empty()) return 0;
 
     auto headers = parse_csv_line(line);
@@ -275,8 +276,15 @@ size_t parse_stop_times(GTFSData& data, const std::string& content) {
     int cont_drop_off_idx = get_col_index(headers, "continuous_drop_off");
 
     size_t count = 0;
+    size_t iteration_counter = 0;
     while (std::getline(ss, line)) {
+        current_bytes += line.length() + 1;
         if (line.empty()) continue;
+
+        if (progress && (iteration_counter++ % 1000 == 0)) {
+            progress("Processing stop_times.txt", current_bytes, total_bytes);
+        }
+
         auto row = parse_csv_line(line);
         StopTime st;
         st.trip_id = data.string_pool.intern(get_val(row, trip_id_idx));
@@ -426,7 +434,7 @@ size_t parse_feed_info(GTFSData& data, const std::string& content) {
     return count;
 }
 
-void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_size, LogFn log = nullptr) {
+void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_size, LogFn log = nullptr, ProgressFn progress = nullptr) {
     data.clear(); 
 
     mz_zip_archive zip_archive;
@@ -438,38 +446,82 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
         return;
     }
 
+    // First pass: Calculate total uncompressed size of relevant files
+    int64_t total_uncompressed_size = 0;
+    int64_t processed_bytes = 0;
     int file_count = mz_zip_reader_get_num_files(&zip_archive);
+
+    // We only care about standard GTFS files for progress
+    std::vector<std::string> target_files = {
+        "agency.txt", "routes.txt", "trips.txt", "stops.txt", "stop_times.txt",
+        "calendar.txt", "calendar_dates.txt", "shapes.txt", "feed_info.txt"
+    };
+
+    for (int i = 0; i < file_count; i++) {
+         mz_zip_archive_file_stat file_stat;
+         if (mz_zip_reader_file_stat(&zip_archive, i, &file_stat)) {
+             for(const auto& tf : target_files) {
+                 if (tf == file_stat.m_filename) {
+                     total_uncompressed_size += file_stat.m_uncomp_size;
+                     break;
+                 }
+             }
+         }
+    }
+
     for (int i = 0; i < file_count; i++) {
         mz_zip_archive_file_stat file_stat;
         if (!mz_zip_reader_file_stat(&zip_archive, i, &file_stat)) continue;
 
         std::string filename = file_stat.m_filename;
+
+        bool is_target = false;
+        for(const auto& tf : target_files) {
+             if (tf == filename) {
+                 is_target = true;
+                 break;
+             }
+        }
+        if (!is_target) continue;
+
         size_t uncomp_size = file_stat.m_uncomp_size;
         void* p = mz_zip_reader_extract_file_to_heap(&zip_archive, filename.c_str(), &uncomp_size, 0);
-        if (!p) continue;
+        if (!p) {
+             processed_bytes += uncomp_size; // Skip but count
+             if (progress) progress("Skipping " + filename, processed_bytes, total_uncompressed_size);
+             continue;
+        }
 
         std::string content((char*)p, uncomp_size);
         mz_free(p);
 
         if (log) log("Loading " + filename + "...");
+        if (progress) progress("Loading " + filename, processed_bytes, total_uncompressed_size);
         
         size_t count = 0;
         if (filename == "agency.txt") count = parse_agency(data, content);
         else if (filename == "routes.txt") count = parse_routes(data, content);
         else if (filename == "trips.txt") count = parse_trips(data, content);
         else if (filename == "stops.txt") count = parse_stops(data, content);
-        else if (filename == "stop_times.txt") count = parse_stop_times(data, content);
+        else if (filename == "stop_times.txt") {
+             count = parse_stop_times(data, content, progress, processed_bytes, total_uncompressed_size);
+        }
         else if (filename == "calendar.txt") count = parse_calendar(data, content);
         else if (filename == "calendar_dates.txt") count = parse_calendar_dates(data, content);
         else if (filename == "shapes.txt") count = parse_shapes(data, content);
         else if (filename == "feed_info.txt") count = parse_feed_info(data, content);
         
+        processed_bytes += uncomp_size;
+        if (progress) progress("Loaded " + filename, processed_bytes, total_uncompressed_size);
+
         if (log) log("Loaded " + std::to_string(count) + " entries from " + filename);
     }
 
     mz_zip_reader_end(&zip_archive);
 
     if (log) log("Sorting stop times...");
+    if (progress) progress("Sorting stop times...", total_uncompressed_size, total_uncompressed_size);
+
     std::sort(data.stop_times.begin(), data.stop_times.end(), 
         [](const StopTime& a, const StopTime& b) {
             if (a.trip_id != b.trip_id) {
@@ -485,6 +537,7 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
     }
     
     if (log) log("GTFS Data Loading Complete.");
+    if (progress) progress("Complete", total_uncompressed_size, total_uncompressed_size);
 }
 
 } // namespace gtfs
