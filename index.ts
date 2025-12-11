@@ -112,7 +112,7 @@ export class GTFS {
 
           process.stdout.write(`\x1b[0K\r[${bar}] ${percent.toFixed(1)}% | ${sizeStr} | ${speedStr} | ${etaStr} | ${task}`);
           if (percent >= 100) {
-              process.stdout.write('\x1b[0K\r');
+              process.stdout.write('\r\x1b[0K');
           }
       }
   }
