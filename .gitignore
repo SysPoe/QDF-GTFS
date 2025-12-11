@@ -6,3 +6,5 @@ build/
 .DS_Store
 .idea
 package-lock.json
+test_cache
+cache
