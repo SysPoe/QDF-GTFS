@@ -18,7 +18,7 @@
     }
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "tsx test.ts",
     "build": "tsc"
   },
   "keywords": [],
@@ -31,6 +31,7 @@
   "devDependencies": {
     "@types/node": "^24.10.1",
     "node-gyp": "^12.1.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "tsx": "^4.21.0"
   }
 }

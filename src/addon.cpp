@@ -10,6 +10,7 @@
 // Simple logger interface
 struct Logger {
     Napi::ThreadSafeFunction tsfn;
+    Napi::ThreadSafeFunction progress_tsfn;
     bool ansi;
 };
 
@@ -21,6 +22,9 @@ public:
     ~GTFSWorker() {
         if (logger.tsfn) {
             logger.tsfn.Release();
+        }
+        if (logger.progress_tsfn) {
+            logger.progress_tsfn.Release();
         }
     }
 
@@ -45,7 +49,20 @@ public:
                 logger.tsfn.BlockingCall(callback);
             };
 
-            gtfs::load_from_zip(*targetData, zipData.data(), zipData.size(), logCallback);
+            auto progressCallback = [this](std::string task, int64_t current, int64_t total) {
+                if (!logger.progress_tsfn) return;
+
+                auto callback = [task, current, total](Napi::Env env, Napi::Function jsCallback) {
+                    jsCallback.Call({
+                        Napi::String::New(env, task),
+                        Napi::Number::New(env, current),
+                        Napi::Number::New(env, total)
+                    });
+                };
+                logger.progress_tsfn.BlockingCall(callback);
+            };
+
+            gtfs::load_from_zip(*targetData, zipData.data(), zipData.size(), logCallback, progressCallback);
         } catch (const std::exception& e) {
             SetError(e.what());
         }
@@ -111,7 +128,7 @@ int GTFSAddon::GetDayOfWeek(const std::string& date_str) {
         time_in.tm_mday = d;
         time_in.tm_mon  = m - 1;
         time_in.tm_year = y - 1900;
-        time_in.tm_isdst = -1; // Let system determine DST
+        time_in.tm_isdst = -1;
 
         std::time_t time_temp = std::mktime(&time_in);
 
@@ -196,12 +213,15 @@ Napi::Value GTFSAddon::LoadFromBuffer(const Napi::CallbackInfo& info) {
     std::vector<unsigned char> zipData(buffer.Data(), buffer.Data() + buffer.Length());
 
     // Logger setup
-    Logger logger = { nullptr, false };
+    Logger logger = { nullptr, nullptr, false };
     if (info.Length() > 1 && info[1].IsFunction()) {
         logger.tsfn = Napi::ThreadSafeFunction::New(env, info[1].As<Napi::Function>(), "GTFSLogger", 0, 1);
     }
     if (info.Length() > 2 && info[2].IsBoolean()) {
         logger.ansi = info[2].As<Napi::Boolean>().Value();
+    }
+    if (info.Length() > 3 && info[3].IsFunction()) {
+        logger.progress_tsfn = Napi::ThreadSafeFunction::New(env, info[3].As<Napi::Function>(), "GTFSProgress", 0, 1);
     }
 
     auto worker = new GTFSWorker(env, std::move(zipData), &data, logger);
@@ -262,9 +282,6 @@ Napi::Value GTFSAddon::UpdateRealtime(const Napi::CallbackInfo& info) {
          return env.Null();
     }
 
-    // Clear old realtime data? Or just append?
-    // Usually updates replace the state.
-    // Let's clear first.
     data.realtime_trip_updates.clear();
     data.realtime_vehicle_positions.clear();
     data.realtime_alerts.clear();
@@ -444,8 +461,6 @@ Napi::Value GTFSAddon::GetRealtimeAlerts(const Napi::CallbackInfo& info) {
 
         obj.Set("update_id", a.update_id);
         obj.Set("is_deleted", a.is_deleted);
-
-        // Active periods omitted for brevity/complexity mapping for now
 
         if (a.cause != -1) obj.Set("cause", a.cause);
         else obj.Set("cause", env.Null());
