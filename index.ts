@@ -3,7 +3,6 @@ import * as fs from 'fs';
 import { createRequire } from 'module';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import * as crypto from 'crypto';
 import {
     Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, GTFSOptions, ProgressInfo
@@ -113,7 +112,7 @@ export class GTFS {
 
           process.stdout.write(`\x1b[0K\r[${bar}] ${percent.toFixed(1)}% | ${sizeStr} | ${speedStr} | ${etaStr} | ${task}`);
           if (percent >= 100) {
-              process.stdout.write('\n');
+              process.stdout.write('\x1b[0K\r');
           }
       }
   }

@@ -1,4 +1,4 @@
-import { GTFS } from "./index";
+import { GTFS } from "./index.js";
 
 async function main() {
 	let g = new GTFS({ ansi: true, logger: console.log });
