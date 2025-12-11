@@ -171,9 +171,11 @@ export class GTFS {
         this.addonInstance.updateRealtime(alerts, tripUpdates, vehiclePositions);
     }
     async updateRealtimeFromUrl(alertsUrl, tripUpdatesUrl, vehiclePositionsUrl) {
-        const alerts = alertsUrl ? await this.download(alertsUrl, "Downloading Alerts") : Buffer.alloc(0);
-        const tripUpdates = tripUpdatesUrl ? await this.download(tripUpdatesUrl, "Downloading TripUpdates") : Buffer.alloc(0);
-        const vehiclePositions = vehiclePositionsUrl ? await this.download(vehiclePositionsUrl, "Downloading VehiclePositions") : Buffer.alloc(0);
+        const [alerts, tripUpdates, vehiclePositions] = await Promise.all([
+            alertsUrl ? this.download(alertsUrl, "Downloading Alerts") : Promise.resolve(Buffer.alloc(0)),
+            tripUpdatesUrl ? this.download(tripUpdatesUrl, "Downloading TripUpdates") : Promise.resolve(Buffer.alloc(0)),
+            vehiclePositionsUrl ? this.download(vehiclePositionsUrl, "Downloading VehiclePositions") : Promise.resolve(Buffer.alloc(0))
+        ]);
         this.updateRealtime(alerts, tripUpdates, vehiclePositions);
     }
     getRealtimeTripUpdates() {
