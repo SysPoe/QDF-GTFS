@@ -7,6 +7,7 @@ export declare class GTFS {
     private ansi;
     private cacheDir?;
     private cache;
+    private lastProgressUpdate;
     constructor(options?: GTFSOptions);
     private showProgress;
     loadFromUrl(url: string): Promise<void>;

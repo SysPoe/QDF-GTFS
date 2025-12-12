@@ -83,6 +83,7 @@ export class GTFS {
   private ansi: boolean;
   private cacheDir?: string;
   private cache: boolean;
+  private lastProgressUpdate: number = 0;
 
   constructor(options?: GTFSOptions) {
       this.addonInstance = new GTFSAddon();
@@ -94,6 +95,13 @@ export class GTFS {
   }
 
   private showProgress(task: string, current: number, total: number, speed: number, eta: number) {
+      const now = Date.now();
+      // Throttle updates to every 100ms to prevent stdout spam and reduce CPU usage
+      if (now - this.lastProgressUpdate < 100 && current < total) {
+          return;
+      }
+      this.lastProgressUpdate = now;
+
       const percent = total > 0 ? (current / total) * 100 : 0;
 
       if (this.progressCallback) {
@@ -254,6 +262,8 @@ export class GTFS {
              const now = Date.now();
              const elapsed = (now - startTime) / 1000;
              const speed = elapsed > 0 ? current / elapsed : 0;
+             // Force update
+             this.lastProgressUpdate = 0;
              this.showProgress(taskName, current, total, speed, 0);
              if (this.ansi) process.stdout.write('\n'); // Clear line
              resolve(Buffer.concat(data))
