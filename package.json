@@ -19,7 +19,8 @@
   },
   "scripts": {
     "test": "tsx test.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "prepare": "npm run build"
   },
   "keywords": [],
   "author": "",
