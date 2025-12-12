@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { createRequire } from 'module';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import * as crypto from 'crypto';
 import {
     Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, GTFSOptions, ProgressInfo
@@ -126,14 +127,50 @@ export class GTFS {
   }
 
   async loadFromUrl(url: string): Promise<void> {
-    if (this.logger) {
-        if (this.ansi) {
-            this.logger(`\x1b[32mDownloading ${url}...\x1b[0m`);
-        } else {
-            this.logger(`Downloading ${url}...`);
+    let buffer: Buffer | null = null;
+    const cacheDir = this.cacheDir || './cache';
+    let cachePath = '';
+
+    if (this.cache) {
+        const hash = crypto.createHash('md5').update(url).digest('hex');
+        cachePath = path.join(cacheDir, hash);
+
+        if (fs.existsSync(cachePath)) {
+             const stats = fs.statSync(cachePath);
+             const age = Date.now() - stats.mtimeMs;
+             const oneDay = 24 * 60 * 60 * 1000;
+
+             if (age < oneDay) {
+                 if (this.logger) this.logger(`Loading from cache: ${cachePath}`);
+                 try {
+                     buffer = fs.readFileSync(cachePath);
+                 } catch (e) {
+                     if (this.logger) this.logger(`Failed to read cache: ${e}`);
+                 }
+             } else {
+                 if (this.logger) this.logger(`Cache expired for ${url}, redownloading...`);
+             }
         }
     }
-    const buffer = await this.download(url, "Downloading");
+
+    if (!buffer) {
+        if (this.logger) {
+            if (this.ansi) {
+                this.logger(`\x1b[32mDownloading ${url}...\x1b[0m`);
+            } else {
+                this.logger(`Downloading ${url}...`);
+            }
+        }
+        buffer = await this.download(url, "Downloading");
+
+        if (this.cache && cachePath) {
+             if (!fs.existsSync(cacheDir)) {
+                 fs.mkdirSync(cacheDir, { recursive: true });
+             }
+             fs.writeFileSync(cachePath, buffer);
+        }
+    }
+
     return this.loadFromBuffer(buffer);
   }
 
