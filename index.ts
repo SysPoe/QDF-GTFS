@@ -197,7 +197,7 @@ export class GTFS {
   getRoutes(): Route[] {
     return this.addonInstance.getRoutes();
   }
-  
+
   getRoute(routeId: string): Route | null {
       return this.addonInstance.getRoute(routeId);
   }
@@ -213,27 +213,27 @@ export class GTFS {
   getStopTimesForTrip(tripId: string): StopTime[] {
       return this.addonInstance.getStopTimesForTrip(tripId);
   }
-  
+
   queryStopTimes(query: StopTimeQuery): StopTime[] {
       return this.addonInstance.queryStopTimes(query);
   }
-  
+
   getFeedInfo(): FeedInfo[] {
       return this.addonInstance.getFeedInfo();
   }
-  
+
   getTrips(): Trip[] {
       return this.addonInstance.getTrips();
   }
-  
+
   getShapes(): Shape[] {
       return this.addonInstance.getShapes();
   }
-  
+
   getCalendars(): Calendar[] {
       return this.addonInstance.getCalendars();
   }
-  
+
   getCalendarDates(): CalendarDate[] {
       return this.addonInstance.getCalendarDates();
   }
@@ -269,6 +269,7 @@ export class GTFS {
       https.get(url, (res) => {
         if (res.statusCode !== 200) {
             if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
+                if (this.logger) this.logger(`Redirected to ${res.headers.location}`);
                 this.download(res.headers.location, taskName).then(resolve).catch(reject);
                 return;
             }
