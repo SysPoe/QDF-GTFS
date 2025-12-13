@@ -8,6 +8,7 @@
 #include <thread>
 #include <future>
 #include <vector>
+#include <atomic>
 
 namespace gtfs {
 
@@ -441,7 +442,6 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
 
     // First pass: Calculate total uncompressed size of relevant files and extract them
     int64_t total_uncompressed_size = 0;
-    int64_t processed_bytes = 0;
     int file_count = mz_zip_reader_get_num_files(&zip_archive);
 
     std::vector<std::string> target_files = {
@@ -479,37 +479,48 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
 
     // Launch parallel tasks
     std::vector<std::future<size_t>> futures;
+    std::atomic<int64_t> processed_bytes(0);
 
-    // Independent small files
+    auto process_file = [&](auto parser_func, const std::string& filename) -> size_t {
+        if (file_contents.find(filename) == file_contents.end()) return 0;
+        const std::string& content = file_contents[filename];
+        size_t count = parser_func(data, content);
+        
+        int64_t current = processed_bytes.fetch_add(content.size()) + content.size();
+        if (progress) progress("Loading GTFS Data", current, total_uncompressed_size);
+        if (log) log("Loaded " + std::to_string(count) + " entries from " + filename);
+        return count;
+    };
+
     if (file_contents.count("agency.txt")) {
-        futures.push_back(std::async(std::launch::async, parse_agency, std::ref(data), std::cref(file_contents["agency.txt"])));
+        futures.push_back(std::async(std::launch::async, process_file, parse_agency, "agency.txt"));
     }
     if (file_contents.count("routes.txt")) {
-        futures.push_back(std::async(std::launch::async, parse_routes, std::ref(data), std::cref(file_contents["routes.txt"])));
+        futures.push_back(std::async(std::launch::async, process_file, parse_routes, "routes.txt"));
     }
     if (file_contents.count("trips.txt")) {
-        futures.push_back(std::async(std::launch::async, parse_trips, std::ref(data), std::cref(file_contents["trips.txt"])));
+        futures.push_back(std::async(std::launch::async, process_file, parse_trips, "trips.txt"));
     }
     if (file_contents.count("stops.txt")) {
-        futures.push_back(std::async(std::launch::async, parse_stops, std::ref(data), std::cref(file_contents["stops.txt"])));
+        futures.push_back(std::async(std::launch::async, process_file, parse_stops, "stops.txt"));
     }
     if (file_contents.count("calendar.txt")) {
-        futures.push_back(std::async(std::launch::async, parse_calendar, std::ref(data), std::cref(file_contents["calendar.txt"])));
+        futures.push_back(std::async(std::launch::async, process_file, parse_calendar, "calendar.txt"));
     }
     if (file_contents.count("calendar_dates.txt")) {
-        futures.push_back(std::async(std::launch::async, parse_calendar_dates, std::ref(data), std::cref(file_contents["calendar_dates.txt"])));
+        futures.push_back(std::async(std::launch::async, process_file, parse_calendar_dates, "calendar_dates.txt"));
     }
     if (file_contents.count("shapes.txt")) {
-        futures.push_back(std::async(std::launch::async, parse_shapes, std::ref(data), std::cref(file_contents["shapes.txt"])));
+        futures.push_back(std::async(std::launch::async, process_file, parse_shapes, "shapes.txt"));
     }
     if (file_contents.count("feed_info.txt")) {
-        futures.push_back(std::async(std::launch::async, parse_feed_info, std::ref(data), std::cref(file_contents["feed_info.txt"])));
+        futures.push_back(std::async(std::launch::async, process_file, parse_feed_info, "feed_info.txt"));
     }
 
     // Special handling for stop_times.txt (parallel chunk parsing)
     std::future<size_t> stop_times_future;
     if (file_contents.count("stop_times.txt")) {
-        stop_times_future = std::async(std::launch::async, [&data, &file_contents, progress, total_uncompressed_size]() -> size_t {
+        stop_times_future = std::async(std::launch::async, [&data, &file_contents, progress, log, total_uncompressed_size, &processed_bytes]() -> size_t {
             const std::string& content = file_contents["stop_times.txt"];
             if (content.empty()) return 0;
 
@@ -551,11 +562,15 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
                 const char* ptr = content.data() + current_pos;
 
                 chunk_futures.push_back(std::async(std::launch::async,
-                    [ptr, len, headers, &data]() {
+                    [ptr, len, headers, &data, &processed_bytes, progress, total_uncompressed_size]() {
                         std::vector<StopTime> vec;
                         // Pre-allocate some memory (Rough estimate: 50 bytes per line)
                         vec.reserve(len / 50);
                         parse_stop_times_chunk(data.string_pool, ptr, len, headers, vec);
+                        
+                        int64_t current = processed_bytes.fetch_add(len) + len;
+                        if (progress) progress("Loading GTFS Data", current, total_uncompressed_size);
+                        
                         return vec;
                     }
                 ));
@@ -574,9 +589,8 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
                     data.stop_times.insert(data.stop_times.end(), chunk_vec.begin(), chunk_vec.end());
                 }
                 total_count += chunk_vec.size();
-
-
             }
+            if (log) log("Loaded " + std::to_string(total_count) + " entries from stop_times.txt");
             return total_count;
         });
     }
