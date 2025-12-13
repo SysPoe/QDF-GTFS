@@ -8,6 +8,8 @@
 #include <memory>
 #include <iostream>
 #include <algorithm>
+#include <shared_mutex>
+#include <mutex>
 
 namespace gtfs {
 
@@ -15,14 +17,22 @@ namespace gtfs {
 class StringPool {
     std::unordered_map<std::string, uint32_t> str_to_id;
     std::vector<std::string> id_to_str;
+    mutable std::shared_mutex mutex_;
 public:
     void clear() {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
         str_to_id.clear();
         id_to_str.clear();
     }
 
     uint32_t intern(const std::string& s) {
-        if (str_to_id.count(s)) return str_to_id[s];
+        {
+            std::shared_lock<std::shared_mutex> lock(mutex_);
+            if (str_to_id.count(s)) return str_to_id.at(s);
+        }
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        if (str_to_id.count(s)) return str_to_id.at(s);
+
         uint32_t id = static_cast<uint32_t>(id_to_str.size());
         str_to_id[s] = id;
         id_to_str.push_back(s);
@@ -30,16 +40,19 @@ public:
     }
 
     std::string get(uint32_t id) const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         if (id < id_to_str.size()) return id_to_str[id];
         return "";
     }
     
     // Check if string exists without creating it
     bool exists(const std::string& s) const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         return str_to_id.count(s);
     }
     
     uint32_t get_id(const std::string& s) const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         if (str_to_id.count(s)) return str_to_id.at(s);
         return 0xFFFFFFFF; // Sentinel for not found
     }

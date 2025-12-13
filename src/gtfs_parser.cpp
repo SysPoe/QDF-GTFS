@@ -5,6 +5,10 @@
 #include <string.h>
 #include <cstdio>
 #include <functional>
+#include <thread>
+#include <future>
+#include <vector>
+#include <atomic>
 
 namespace gtfs {
 
@@ -252,16 +256,12 @@ size_t parse_stops(GTFSData& data, const std::string& content) {
     return count;
 }
 
-size_t parse_stop_times(GTFSData& data, const std::string& content, ProgressFn progress = nullptr, int64_t already_processed_bytes = 0, int64_t total_bytes = 0) {
+// Updated to output to a specific vector, useful for multithreading
+size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t length, const std::vector<std::string>& headers, std::vector<StopTime>& out_vec) {
+    std::string content(start, length);
     std::stringstream ss(content);
     std::string line;
-    std::getline(ss, line);
 
-    int64_t current_bytes = already_processed_bytes + line.length() + 1; // +1 for newline
-
-    if (line.empty()) return 0;
-
-    auto headers = parse_csv_line(line);
     int trip_id_idx = get_col_index(headers, "trip_id");
     int arrival_idx = get_col_index(headers, "arrival_time");
     int departure_idx = get_col_index(headers, "departure_time");
@@ -276,35 +276,25 @@ size_t parse_stop_times(GTFSData& data, const std::string& content, ProgressFn p
     int cont_drop_off_idx = get_col_index(headers, "continuous_drop_off");
 
     size_t count = 0;
-    size_t iteration_counter = 0;
     while (std::getline(ss, line)) {
-        current_bytes += line.length() + 1;
         if (line.empty()) continue;
-
-        if (progress && (iteration_counter++ % 10000 == 0)) {
-            progress("Loading GTFS Data", current_bytes, total_bytes);
-        }
 
         auto row = parse_csv_line(line);
         StopTime st;
-        st.trip_id = data.string_pool.intern(get_val(row, trip_id_idx));
+        st.trip_id = string_pool.intern(get_val(row, trip_id_idx));
         st.arrival_time = parse_time_seconds(get_val(row, arrival_idx));
         st.departure_time = parse_time_seconds(get_val(row, departure_idx));
-        st.stop_id = data.string_pool.intern(get_val(row, stop_id_idx));
+        st.stop_id = string_pool.intern(get_val(row, stop_id_idx));
         st.stop_sequence = get_int(row, seq_idx);
-        st.stop_headsign = data.string_pool.intern(get_val(row, headsign_idx));
+        st.stop_headsign = string_pool.intern(get_val(row, headsign_idx));
         st.pickup_type = get_int(row, pickup_idx);
         st.drop_off_type = get_int(row, drop_off_idx);
         st.shape_dist_traveled = get_double(row, dist_idx);
         st.timepoint = get_int(row, timepoint_idx);
         st.continuous_pickup = get_int(row, cont_pickup_idx, 1);
         st.continuous_drop_off = get_int(row, cont_drop_off_idx, 1);
-        data.stop_times.push_back(st);
+        out_vec.push_back(st);
         count++;
-    }
-
-    if (progress) {
-        progress("Loading GTFS Data", current_bytes, current_bytes);
     }
     return count;
 }
@@ -450,35 +440,22 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
         return;
     }
 
-    // First pass: Calculate total uncompressed size of relevant files
+    // First pass: Calculate total uncompressed size of relevant files and extract them
     int64_t total_uncompressed_size = 0;
-    int64_t processed_bytes = 0;
     int file_count = mz_zip_reader_get_num_files(&zip_archive);
 
-    // We only care about standard GTFS files for progress
     std::vector<std::string> target_files = {
         "agency.txt", "routes.txt", "trips.txt", "stops.txt", "stop_times.txt",
         "calendar.txt", "calendar_dates.txt", "shapes.txt", "feed_info.txt"
     };
 
-    for (int i = 0; i < file_count; i++) {
-         mz_zip_archive_file_stat file_stat;
-         if (mz_zip_reader_file_stat(&zip_archive, i, &file_stat)) {
-             for(const auto& tf : target_files) {
-                 if (tf == file_stat.m_filename) {
-                     total_uncompressed_size += file_stat.m_uncomp_size;
-                     break;
-                 }
-             }
-         }
-    }
+    std::unordered_map<std::string, std::string> file_contents;
 
     for (int i = 0; i < file_count; i++) {
         mz_zip_archive_file_stat file_stat;
         if (!mz_zip_reader_file_stat(&zip_archive, i, &file_stat)) continue;
 
         std::string filename = file_stat.m_filename;
-
         bool is_target = false;
         for(const auto& tf : target_files) {
              if (tf == filename) {
@@ -490,39 +467,144 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
 
         size_t uncomp_size = file_stat.m_uncomp_size;
         void* p = mz_zip_reader_extract_file_to_heap(&zip_archive, filename.c_str(), &uncomp_size, 0);
-        if (!p) {
-             processed_bytes += uncomp_size; // Skip but count
-             continue;
+        if (p) {
+            file_contents[filename] = std::string((char*)p, uncomp_size);
+            mz_free(p);
+            total_uncompressed_size += uncomp_size;
         }
-
-        std::string content((char*)p, uncomp_size);
-        mz_free(p);
-
-        if (log) log("Loading " + filename + "...");
-        
-        if (progress) progress("Loading GTFS Data", processed_bytes, total_uncompressed_size);
-
-        size_t count = 0;
-        if (filename == "agency.txt") count = parse_agency(data, content);
-        else if (filename == "routes.txt") count = parse_routes(data, content);
-        else if (filename == "trips.txt") count = parse_trips(data, content);
-        else if (filename == "stops.txt") count = parse_stops(data, content);
-        else if (filename == "stop_times.txt") {
-             count = parse_stop_times(data, content, progress, processed_bytes, total_uncompressed_size);
-        }
-        else if (filename == "calendar.txt") count = parse_calendar(data, content);
-        else if (filename == "calendar_dates.txt") count = parse_calendar_dates(data, content);
-        else if (filename == "shapes.txt") count = parse_shapes(data, content);
-        else if (filename == "feed_info.txt") count = parse_feed_info(data, content);
-
-        processed_bytes += uncomp_size;
-
-        if (log) log("Loaded " + std::to_string(count) + " entries from " + filename);
     }
-
     mz_zip_reader_end(&zip_archive);
 
-    if (log) log("Sorting stop times...");
+    if (log) log("Files extracted to memory. Starting parallel parsing...");
+
+    // Launch parallel tasks
+    std::vector<std::future<size_t>> futures;
+    std::atomic<int64_t> processed_bytes(0);
+
+    auto process_file = [&](auto parser_func, const std::string& filename) -> size_t {
+        if (file_contents.find(filename) == file_contents.end()) return 0;
+        const std::string& content = file_contents[filename];
+        size_t count = parser_func(data, content);
+        
+        int64_t current = processed_bytes.fetch_add(content.size()) + content.size();
+        if (progress) progress("Loading GTFS Data", current, total_uncompressed_size);
+        if (log) log("Loaded " + std::to_string(count) + " entries from " + filename);
+        return count;
+    };
+
+    if (file_contents.count("agency.txt")) {
+        futures.push_back(std::async(std::launch::async, process_file, parse_agency, "agency.txt"));
+    }
+    if (file_contents.count("routes.txt")) {
+        futures.push_back(std::async(std::launch::async, process_file, parse_routes, "routes.txt"));
+    }
+    if (file_contents.count("trips.txt")) {
+        futures.push_back(std::async(std::launch::async, process_file, parse_trips, "trips.txt"));
+    }
+    if (file_contents.count("stops.txt")) {
+        futures.push_back(std::async(std::launch::async, process_file, parse_stops, "stops.txt"));
+    }
+    if (file_contents.count("calendar.txt")) {
+        futures.push_back(std::async(std::launch::async, process_file, parse_calendar, "calendar.txt"));
+    }
+    if (file_contents.count("calendar_dates.txt")) {
+        futures.push_back(std::async(std::launch::async, process_file, parse_calendar_dates, "calendar_dates.txt"));
+    }
+    if (file_contents.count("shapes.txt")) {
+        futures.push_back(std::async(std::launch::async, process_file, parse_shapes, "shapes.txt"));
+    }
+    if (file_contents.count("feed_info.txt")) {
+        futures.push_back(std::async(std::launch::async, process_file, parse_feed_info, "feed_info.txt"));
+    }
+
+    // Special handling for stop_times.txt (parallel chunk parsing)
+    std::future<size_t> stop_times_future;
+    if (file_contents.count("stop_times.txt")) {
+        stop_times_future = std::async(std::launch::async, [&data, &file_contents, progress, log, total_uncompressed_size, &processed_bytes]() -> size_t {
+            const std::string& content = file_contents["stop_times.txt"];
+            if (content.empty()) return 0;
+
+            // Read header
+            size_t header_end = content.find('\n');
+            if (header_end == std::string::npos) return 0;
+            std::string header_line = content.substr(0, header_end);
+            auto headers = parse_csv_line(header_line);
+
+            size_t start_pos = header_end + 1;
+            size_t total_length = content.length();
+            if (start_pos >= total_length) return 0;
+
+            unsigned int thread_count = std::thread::hardware_concurrency();
+            if (thread_count == 0) thread_count = 4;
+
+            size_t data_size = total_length - start_pos;
+            size_t chunk_size = data_size / thread_count;
+
+            std::vector<std::future<std::vector<StopTime>>> chunk_futures;
+            size_t current_pos = start_pos;
+
+            for (unsigned int i = 0; i < thread_count; ++i) {
+                size_t end_pos = current_pos + chunk_size;
+                if (i == thread_count - 1) {
+                    end_pos = total_length;
+                } else {
+                    size_t next_newline = content.find('\n', end_pos);
+                    if (next_newline != std::string::npos) {
+                        end_pos = next_newline + 1;
+                    } else {
+                        end_pos = total_length;
+                    }
+                }
+
+                if (current_pos >= total_length) break;
+
+                size_t len = end_pos - current_pos;
+                const char* ptr = content.data() + current_pos;
+
+                chunk_futures.push_back(std::async(std::launch::async,
+                    [ptr, len, headers, &data, &processed_bytes, progress, total_uncompressed_size]() {
+                        std::vector<StopTime> vec;
+                        // Pre-allocate some memory (Rough estimate: 50 bytes per line)
+                        vec.reserve(len / 50);
+                        parse_stop_times_chunk(data.string_pool, ptr, len, headers, vec);
+                        
+                        int64_t current = processed_bytes.fetch_add(len) + len;
+                        if (progress) progress("Loading GTFS Data", current, total_uncompressed_size);
+                        
+                        return vec;
+                    }
+                ));
+                current_pos = end_pos;
+            }
+
+            size_t total_count = 0;
+            for (auto& f : chunk_futures) {
+                auto chunk_vec = f.get();
+
+                // Merge chunks into the main vector.
+                // This is safe because only this task modifies data.stop_times.
+                if (data.stop_times.empty()) {
+                    data.stop_times = std::move(chunk_vec);
+                } else {
+                    data.stop_times.insert(data.stop_times.end(), chunk_vec.begin(), chunk_vec.end());
+                }
+                total_count += chunk_vec.size();
+            }
+            if (log) log("Loaded " + std::to_string(total_count) + " entries from stop_times.txt");
+            return total_count;
+        });
+    }
+
+    // Wait for all futures
+    size_t total_parsed = 0;
+    for (auto& f : futures) {
+        total_parsed += f.get();
+    }
+    if (stop_times_future.valid()) {
+        total_parsed += stop_times_future.get();
+    }
+
+    if (log) log("Parsing complete. Sorting stop times...");
 
     std::sort(data.stop_times.begin(), data.stop_times.end(),
         [](const StopTime& a, const StopTime& b) {
