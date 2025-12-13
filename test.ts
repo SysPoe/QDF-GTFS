@@ -13,6 +13,14 @@ async function main() {
 	getAppMemoryUsage();
 
 	console.log( "Done in", Date.now() - startTime, "ms" );
+	console.log( "Found", g.getAgencies().length, "agencies" );
+	console.log( "Found", g.getCalendars().length, "calendars" );
+	console.log( "Found", g.getCalendarDates().length, "calendar dates" );
+	console.log( "Found", g.getFeedInfo(), "feed info" );
+	console.log( "Found", g.getShapes().length, "shapes" );
+	console.log( "Found", g.getStops().length, "stops" );
+	console.log( "Found", g.getTrips().length, "trips" );
+	console.log( "Found", g.getTrips().flatMap( v => g.getStopTimesForTrip( v.trip_id ) ).length, "stopTimes" );
 }
 
 function getAppMemoryUsage() {

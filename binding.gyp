@@ -4,13 +4,13 @@
       "target_name": "gtfs_addon",
       "cflags!": [ "-fno-exceptions" ],
       "cflags_cc!": [ "-fno-exceptions" ],
-      "cflags_cc": [ "-std=c++17" ],
+      "cflags_cc": [ "-std=c++20" ],
       "xcode_settings": {
-        "CLANG_CXX_LANGUAGE_STANDARD": "c++17"
+        "CLANG_CXX_LANGUAGE_STANDARD": "c++20"
       },
       "msvs_settings": {
         "VCCLCompilerTool": {
-          "AdditionalOptions": [ "/std:c++17" ]
+          "AdditionalOptions": [ "/std:c++20" ]
         }
       },
       "sources": [

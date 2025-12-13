@@ -575,7 +575,7 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
                 }
                 total_count += chunk_vec.size();
 
-                if (progress) progress("Processing stop_times chunks...", 0, total_uncompressed_size);
+
             }
             return total_count;
         });
