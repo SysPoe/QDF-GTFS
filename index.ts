@@ -95,7 +95,7 @@ export class GTFS {
       this.cache = options?.cache || false;
   }
 
-  private showProgress(task: string, current: number, total: number, speed: number, eta: number) {
+  private showProgress(task: string, current: number, total: number, startTime: number) {
       const now = Date.now();
       // Throttle updates to every 100ms to prevent stdout spam and reduce CPU usage
       if (now - this.lastProgressUpdate < 100 && current < total) {
@@ -103,6 +103,10 @@ export class GTFS {
       }
       this.lastProgressUpdate = now;
 
+      const elapsed = (now - startTime) / 1000;
+      const speed = elapsed > 0 ? current / elapsed : 0;
+      const remaining = total - current;
+      const eta = speed > 0 ? remaining / speed : 0;
       const percent = total > 0 ? (current / total) * 100 : 0;
 
       if (this.progressCallback) {
@@ -183,12 +187,7 @@ export class GTFS {
     const startTime = Date.now();
     // We pass a callback that bridges C++ updates to our showProgress
     const progressBridge = (task: string, current: number, total: number) => {
-        const now = Date.now();
-        const elapsed = (now - startTime) / 1000;
-        const speed = elapsed > 0 ? current / elapsed : 0;
-        const remaining = total - current;
-        const eta = speed > 0 ? remaining / speed : 0;
-        this.showProgress(task, current, total, speed, eta);
+        this.showProgress(task, current, total, startTime);
     };
 
     return this.addonInstance.loadFromBuffer(buffer, this.logger, this.ansi, progressBridge);
@@ -279,32 +278,54 @@ export class GTFS {
 
         const total = parseInt(res.headers['content-length'] || '0', 10);
         let current = 0;
-        const data: Buffer[] = [];
+
+        // Optimization: Pre-allocate buffer if size is known to reduce memory fragmentation
+        let buffer: Buffer | null = null;
+        const chunks: Buffer[] = [];
+        let bufferFilled = 0;
+
+        if (total > 0) {
+            try {
+                buffer = Buffer.allocUnsafe(total);
+            } catch (e) {
+                // Fallback if allocation fails
+                buffer = null;
+            }
+        }
+
         const startTime = Date.now();
 
-        res.on('data', (chunk) => {
-            data.push(chunk);
-            current += chunk.length;
-
-            const now = Date.now();
-            const elapsed = (now - startTime) / 1000;
-            const speed = elapsed > 0 ? current / elapsed : 0;
-            const remaining = total - current;
-            const eta = speed > 0 ? remaining / speed : 0;
-
-            this.showProgress(taskName, current, total, speed, eta);
+        res.on('data', (chunk: Buffer) => {
+             if (buffer && bufferFilled + chunk.length <= total) {
+                 chunk.copy(buffer, bufferFilled);
+                 bufferFilled += chunk.length;
+             } else {
+                 chunks.push(chunk);
+             }
+             current += chunk.length;
+             this.showProgress(taskName, current, total, startTime);
         });
 
         res.on('end', () => {
-             // Ensure 100%
-             const now = Date.now();
-             const elapsed = (now - startTime) / 1000;
-             const speed = elapsed > 0 ? current / elapsed : 0;
              // Force update
              this.lastProgressUpdate = 0;
-             this.showProgress(taskName, current, total, speed, 0);
+             this.showProgress(taskName, current, total, startTime);
              if (this.ansi) process.stdout.write('\n'); // Clear line
-             resolve(Buffer.concat(data))
+
+             let finalBuffer: Buffer;
+             if (buffer) {
+                 if (chunks.length === 0) {
+                      // Everything fitted
+                      finalBuffer = buffer.subarray(0, bufferFilled);
+                 } else {
+                      // We have overflow or mismatch
+                      finalBuffer = Buffer.concat([buffer.subarray(0, bufferFilled), ...chunks]);
+                 }
+             } else {
+                 finalBuffer = Buffer.concat(chunks);
+             }
+
+             resolve(finalBuffer);
         });
         res.on('error', (err) => reject(err));
       }).on('error', (err) => reject(err));
