@@ -244,9 +244,9 @@ export class GTFS {
 
   async updateRealtimeFromUrl(alertsUrl?: string, tripUpdatesUrl?: string, vehiclePositionsUrl?: string): Promise<void> {
       const [alerts, tripUpdates, vehiclePositions] = await Promise.all([
-          alertsUrl ? this.download(alertsUrl, "Downloading Alerts") : Promise.resolve(Buffer.alloc(0)),
-          tripUpdatesUrl ? this.download(tripUpdatesUrl, "Downloading TripUpdates") : Promise.resolve(Buffer.alloc(0)),
-          vehiclePositionsUrl ? this.download(vehiclePositionsUrl, "Downloading VehiclePositions") : Promise.resolve(Buffer.alloc(0))
+          alertsUrl ? this.download(alertsUrl, "Downloading Alerts", false) : Promise.resolve(Buffer.alloc(0)),
+          tripUpdatesUrl ? this.download(tripUpdatesUrl, "Downloading TripUpdates", false) : Promise.resolve(Buffer.alloc(0)),
+          vehiclePositionsUrl ? this.download(vehiclePositionsUrl, "Downloading VehiclePositions", false) : Promise.resolve(Buffer.alloc(0))
       ]);
 
       this.updateRealtime(alerts, tripUpdates, vehiclePositions);
@@ -264,7 +264,7 @@ export class GTFS {
       return this.addonInstance.getRealtimeAlerts();
   }
 
-  private download(url: string, taskName: string = "Downloading"): Promise<Buffer> {
+  private download(url: string, taskName: string = "Downloading", showProgressBar: boolean = true): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       https.get(url, (res) => {
         if (res.statusCode !== 200) {
@@ -286,24 +286,28 @@ export class GTFS {
             data.push(chunk);
             current += chunk.length;
 
-            const now = Date.now();
-            const elapsed = (now - startTime) / 1000;
-            const speed = elapsed > 0 ? current / elapsed : 0;
-            const remaining = total - current;
-            const eta = speed > 0 ? remaining / speed : 0;
+            if (showProgressBar) {
+                const now = Date.now();
+                const elapsed = (now - startTime) / 1000;
+                const speed = elapsed > 0 ? current / elapsed : 0;
+                const remaining = total - current;
+                const eta = speed > 0 ? remaining / speed : 0;
 
-            this.showProgress(taskName, current, total, speed, eta);
+                this.showProgress(taskName, current, total, speed, eta);
+            }
         });
 
         res.on('end', () => {
              // Ensure 100%
-             const now = Date.now();
-             const elapsed = (now - startTime) / 1000;
-             const speed = elapsed > 0 ? current / elapsed : 0;
-             // Force update
-             this.lastProgressUpdate = 0;
-             this.showProgress(taskName, current, total, speed, 0);
-             if (this.ansi) process.stdout.write('\n'); // Clear line
+             if (showProgressBar) {
+                 const now = Date.now();
+                 const elapsed = (now - startTime) / 1000;
+                 const speed = elapsed > 0 ? current / elapsed : 0;
+                 // Force update
+                 this.lastProgressUpdate = 0;
+                 this.showProgress(taskName, current, total, speed, 0);
+                 if (this.ansi) process.stdout.write('\n'); // Clear line
+             }
              resolve(Buffer.concat(data))
         });
         res.on('error', (err) => reject(err));
