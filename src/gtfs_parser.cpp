@@ -282,7 +282,7 @@ size_t parse_stop_times(GTFSData& data, const std::string& content, ProgressFn p
         if (line.empty()) continue;
 
         if (progress && (iteration_counter++ % 10000 == 0)) {
-            progress("Processing stop_times.txt", current_bytes, total_bytes);
+            progress("Loading GTFS Data", current_bytes, total_bytes);
         }
 
         auto row = parse_csv_line(line);
@@ -304,7 +304,7 @@ size_t parse_stop_times(GTFSData& data, const std::string& content, ProgressFn p
     }
 
     if (progress) {
-        progress("Processing stop_times.txt", current_bytes, current_bytes);
+        progress("Loading GTFS Data", current_bytes, current_bytes);
     }
     return count;
 }
@@ -499,6 +499,8 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
         mz_free(p);
 
         if (log) log("Loading " + filename + "...");
+        
+        if (progress) progress("Loading GTFS Data", processed_bytes, total_uncompressed_size);
 
         size_t count = 0;
         if (filename == "agency.txt") count = parse_agency(data, content);

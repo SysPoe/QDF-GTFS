@@ -161,7 +161,7 @@ export class GTFS {
                 this.logger(`Downloading ${url}...`);
             }
         }
-        buffer = await this.download(url, "Downloading");
+        buffer = await this.download(url, "Downloading GTFS Feed");
 
         if (this.cache && cachePath) {
              if (!fs.existsSync(cacheDir)) {
@@ -264,7 +264,7 @@ export class GTFS {
       return this.addonInstance.getRealtimeAlerts();
   }
 
-  private download(url: string, taskName: string = "Downloading"): Promise<Buffer> {
+  private download(url: string, taskName: string = "Downloading GTFS Feed"): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       https.get(url, (res) => {
         if (res.statusCode !== 200) {
