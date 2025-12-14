@@ -34,13 +34,19 @@ try {
                      // Add other methods as no-ops
                      getRoutes() { return []; }
                      getRoute() { return null; }
+                     getAgency() { return null; }
                      getAgencies() { return []; }
+                     getStop() { return null; }
                      getStops() { return []; }
                      getStopTimesForTrip() { return []; }
                      queryStopTimes() { return []; }
+                     getTrip() { return null; }
                      getTrips() { return []; }
+                     getShape() { return null; }
                      getShapes() { return []; }
+                     getCalendar() { return null; }
                      getCalendars() { return []; }
+                     getCalendarDatesForService() { return null; }
                      getCalendarDates() { return []; }
                      updateRealtime() {}
                      getRealtimeTripUpdates() { return []; }
@@ -202,9 +208,17 @@ export class GTFS {
       return this.addonInstance.getRoute(routeId);
   }
 
+    getAgency(agencyId: string): Agency | null {
+            return this.addonInstance.getAgency(agencyId);
+    }
+
   getAgencies(): Agency[] {
     return this.addonInstance.getAgencies();
   }
+
+    getStop(stopId: string): Stop | null {
+            return this.addonInstance.getStop(stopId);
+    }
 
   getStops(): Stop[] {
     return this.addonInstance.getStops();
@@ -222,16 +236,32 @@ export class GTFS {
       return this.addonInstance.getFeedInfo();
   }
 
+  getTrip(tripId: string): Trip | null {
+      return this.addonInstance.getTrip(tripId);
+  }
+
   getTrips(): Trip[] {
       return this.addonInstance.getTrips();
+  }
+
+  getShape(shapeId: string): Shape[] | null {
+      return this.addonInstance.getShape(shapeId);
   }
 
   getShapes(): Shape[] {
       return this.addonInstance.getShapes();
   }
 
+  getCalendar(serviceId: string): Calendar | null {
+      return this.addonInstance.getCalendar(serviceId);
+  }
+
   getCalendars(): Calendar[] {
       return this.addonInstance.getCalendars();
+  }
+
+  getCalendarDatesForService(serviceId: string): CalendarDate[] | null {
+      return this.addonInstance.getCalendarDatesForService(serviceId);
   }
 
   getCalendarDates(): CalendarDate[] {

@@ -96,14 +96,20 @@ private:
     Napi::Value LoadFromBuffer(const Napi::CallbackInfo& info);
     Napi::Value GetRoutes(const Napi::CallbackInfo& info);
     Napi::Value GetRoute(const Napi::CallbackInfo& info);
+    Napi::Value GetAgency(const Napi::CallbackInfo& info);
     Napi::Value GetAgencies(const Napi::CallbackInfo& info);
+    Napi::Value GetStop(const Napi::CallbackInfo& info);
     Napi::Value GetStops(const Napi::CallbackInfo& info);
     Napi::Value GetStopTimesForTrip(const Napi::CallbackInfo& info);
     Napi::Value QueryStopTimes(const Napi::CallbackInfo& info); 
     Napi::Value GetFeedInfo(const Napi::CallbackInfo& info);
+    Napi::Value GetTrip(const Napi::CallbackInfo& info);
     Napi::Value GetTrips(const Napi::CallbackInfo& info);
+    Napi::Value GetShape(const Napi::CallbackInfo& info);
     Napi::Value GetShapes(const Napi::CallbackInfo& info);
+    Napi::Value GetCalendar(const Napi::CallbackInfo& info);
     Napi::Value GetCalendars(const Napi::CallbackInfo& info);
+    Napi::Value GetCalendarDatesForService(const Napi::CallbackInfo& info);
     Napi::Value GetCalendarDates(const Napi::CallbackInfo& info);
     Napi::Value UpdateRealtime(const Napi::CallbackInfo& info);
     Napi::Value GetRealtimeTripUpdates(const Napi::CallbackInfo& info);
@@ -176,14 +182,20 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("loadFromBuffer", &GTFSAddon::LoadFromBuffer),
         InstanceMethod("getRoutes", &GTFSAddon::GetRoutes),
         InstanceMethod("getRoute", &GTFSAddon::GetRoute),
+        InstanceMethod("getAgency", &GTFSAddon::GetAgency),
         InstanceMethod("getAgencies", &GTFSAddon::GetAgencies),
+        InstanceMethod("getStop", &GTFSAddon::GetStop),
         InstanceMethod("getStops", &GTFSAddon::GetStops),
         InstanceMethod("getStopTimesForTrip", &GTFSAddon::GetStopTimesForTrip),
         InstanceMethod("queryStopTimes", &GTFSAddon::QueryStopTimes),
         InstanceMethod("getFeedInfo", &GTFSAddon::GetFeedInfo),
+        InstanceMethod("getTrip", &GTFSAddon::GetTrip),
         InstanceMethod("getTrips", &GTFSAddon::GetTrips),
+        InstanceMethod("getShape", &GTFSAddon::GetShape),
         InstanceMethod("getShapes", &GTFSAddon::GetShapes),
+        InstanceMethod("getCalendar", &GTFSAddon::GetCalendar),
         InstanceMethod("getCalendars", &GTFSAddon::GetCalendars),
+        InstanceMethod("getCalendarDatesForService", &GTFSAddon::GetCalendarDatesForService),
         InstanceMethod("getCalendarDates", &GTFSAddon::GetCalendarDates),
         InstanceMethod("updateRealtime", &GTFSAddon::UpdateRealtime),
         InstanceMethod("getRealtimeTripUpdates", &GTFSAddon::GetRealtimeTripUpdates),
@@ -251,6 +263,32 @@ Napi::Value GTFSAddon::GetRoute(const Napi::CallbackInfo& info) {
         return obj;
     }
     return env.Null();
+}
+
+Napi::Value GTFSAddon::GetAgency(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "String expected").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::string agency_id = info[0].As<Napi::String>().Utf8Value();
+    auto it = data.agencies.find(agency_id);
+    if (it == data.agencies.end()) {
+        return env.Null();
+    }
+
+    const auto& a = it->second;
+    Napi::Object obj = Napi::Object::New(env);
+    obj.Set("agency_id", a.agency_id);
+    obj.Set("agency_name", a.agency_name);
+    obj.Set("agency_url", a.agency_url);
+    obj.Set("agency_timezone", a.agency_timezone);
+    obj.Set("agency_lang", a.agency_lang);
+    obj.Set("agency_phone", a.agency_phone);
+    obj.Set("agency_fare_url", a.agency_fare_url);
+    obj.Set("agency_email", a.agency_email);
+    return obj;
 }
 
 Napi::Value GTFSAddon::GetRoutes(const Napi::CallbackInfo& info) {
@@ -497,6 +535,38 @@ Napi::Value GTFSAddon::GetAgencies(const Napi::CallbackInfo& info) {
         arr[i++] = obj;
     }
     return arr;
+}
+
+Napi::Value GTFSAddon::GetStop(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "String expected").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::string stop_id = info[0].As<Napi::String>().Utf8Value();
+    auto it = data.stops.find(stop_id);
+    if (it == data.stops.end()) {
+        return env.Null();
+    }
+
+    const auto& s = it->second;
+    Napi::Object obj = Napi::Object::New(env);
+    obj.Set("stop_id", s.stop_id);
+    obj.Set("stop_code", s.stop_code);
+    obj.Set("stop_name", s.stop_name);
+    obj.Set("stop_desc", s.stop_desc);
+    obj.Set("stop_lat", s.stop_lat);
+    obj.Set("stop_lon", s.stop_lon);
+    obj.Set("zone_id", s.zone_id);
+    obj.Set("stop_url", s.stop_url);
+    obj.Set("location_type", s.location_type);
+    obj.Set("parent_station", s.parent_station);
+    obj.Set("stop_timezone", s.stop_timezone);
+    obj.Set("wheelchair_boarding", s.wheelchair_boarding);
+    obj.Set("level_id", s.level_id);
+    obj.Set("platform_code", s.platform_code);
+    return obj;
 }
 
 Napi::Value GTFSAddon::GetStops(const Napi::CallbackInfo& info) {
@@ -777,6 +847,34 @@ Napi::Value GTFSAddon::GetFeedInfo(const Napi::CallbackInfo& info) {
     return arr;
 }
 
+Napi::Value GTFSAddon::GetTrip(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "String expected").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::string trip_id = info[0].As<Napi::String>().Utf8Value();
+    auto it = data.trips.find(trip_id);
+    if (it == data.trips.end()) {
+        return env.Null();
+    }
+
+    const auto& t = it->second;
+    Napi::Object obj = Napi::Object::New(env);
+    obj.Set("trip_id", t.trip_id);
+    obj.Set("route_id", t.route_id);
+    obj.Set("service_id", t.service_id);
+    obj.Set("trip_headsign", t.trip_headsign);
+    obj.Set("trip_short_name", t.trip_short_name);
+    obj.Set("direction_id", t.direction_id);
+    obj.Set("block_id", t.block_id);
+    obj.Set("shape_id", t.shape_id);
+    obj.Set("wheelchair_accessible", t.wheelchair_accessible);
+    obj.Set("bikes_allowed", t.bikes_allowed);
+    return obj;
+}
+
 Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     Napi::Array arr = Napi::Array::New(env, data.trips.size());
@@ -798,6 +896,40 @@ Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
     return arr;
 }
 
+Napi::Value GTFSAddon::GetShape(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "String expected").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::string shape_id = info[0].As<Napi::String>().Utf8Value();
+    std::vector<const gtfs::Shape*> matches;
+    matches.reserve(data.shapes.size());
+    for (const auto& s : data.shapes) {
+        if (s.shape_id == shape_id) {
+            matches.push_back(&s);
+        }
+    }
+
+    if (matches.empty()) {
+        return env.Null();
+    }
+
+    Napi::Array arr = Napi::Array::New(env, matches.size());
+    for (size_t i = 0; i < matches.size(); ++i) {
+        const auto* s = matches[i];
+        Napi::Object obj = Napi::Object::New(env);
+        obj.Set("shape_id", s->shape_id);
+        obj.Set("shape_pt_lat", s->shape_pt_lat);
+        obj.Set("shape_pt_lon", s->shape_pt_lon);
+        obj.Set("shape_pt_sequence", s->shape_pt_sequence);
+        obj.Set("shape_dist_traveled", s->shape_dist_traveled);
+        arr[i] = obj;
+    }
+    return arr;
+}
+
 Napi::Value GTFSAddon::GetShapes(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     Napi::Array arr = Napi::Array::New(env, data.shapes.size());
@@ -811,6 +943,34 @@ Napi::Value GTFSAddon::GetShapes(const Napi::CallbackInfo& info) {
         arr[i] = obj;
     }
     return arr;
+}
+
+Napi::Value GTFSAddon::GetCalendar(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "String expected").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::string service_id = info[0].As<Napi::String>().Utf8Value();
+    auto it = data.calendars.find(service_id);
+    if (it == data.calendars.end()) {
+        return env.Null();
+    }
+
+    const auto& c = it->second;
+    Napi::Object obj = Napi::Object::New(env);
+    obj.Set("service_id", c.service_id);
+    obj.Set("monday", c.monday);
+    obj.Set("tuesday", c.tuesday);
+    obj.Set("wednesday", c.wednesday);
+    obj.Set("thursday", c.thursday);
+    obj.Set("friday", c.friday);
+    obj.Set("saturday", c.saturday);
+    obj.Set("sunday", c.sunday);
+    obj.Set("start_date", c.start_date);
+    obj.Set("end_date", c.end_date);
+    return obj;
 }
 
 Napi::Value GTFSAddon::GetCalendars(const Napi::CallbackInfo& info) {
@@ -830,6 +990,32 @@ Napi::Value GTFSAddon::GetCalendars(const Napi::CallbackInfo& info) {
         obj.Set("start_date", c.start_date);
         obj.Set("end_date", c.end_date);
         arr[i++] = obj;
+    }
+    return arr;
+}
+
+Napi::Value GTFSAddon::GetCalendarDatesForService(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "String expected").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::string service_id = info[0].As<Napi::String>().Utf8Value();
+    auto it = data.calendar_dates.find(service_id);
+    if (it == data.calendar_dates.end()) {
+        return env.Null();
+    }
+
+    const auto& dates = it->second;
+    Napi::Array arr = Napi::Array::New(env, dates.size());
+    size_t idx = 0;
+    for (const auto& [date, exc] : dates) {
+        Napi::Object obj = Napi::Object::New(env);
+        obj.Set("service_id", service_id);
+        obj.Set("date", date);
+        obj.Set("exception_type", exc);
+        arr[idx++] = obj;
     }
     return arr;
 }
