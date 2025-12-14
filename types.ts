@@ -274,7 +274,7 @@ export interface RealtimeUpdateTripInfo {
     route_id: string;
     direction_id: number | null;
     start_time: string;
-    start_date: string;
+    start_date: string | null;
     schedule_relationship: TripScheduleRelationship;
 }
 

@@ -363,7 +363,8 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
         else trip.Set("direction_id", env.Null());
 
         trip.Set("start_time", tu.trip.start_time);
-        trip.Set("start_date", tu.trip.start_date);
+        if (!tu.trip.start_date.empty()) trip.Set("start_date", tu.trip.start_date);
+        else trip.Set("start_date", env.Null());
 
         trip.Set("schedule_relationship", tu.trip.schedule_relationship);
 
@@ -439,7 +440,8 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
         else trip.Set("direction_id", env.Null());
 
         trip.Set("start_time", vp.trip.start_time);
-        trip.Set("start_date", vp.trip.start_date);
+        if (!vp.trip.start_date.empty()) trip.Set("start_date", vp.trip.start_date);
+        else trip.Set("start_date", env.Null());
 
         trip.Set("schedule_relationship", vp.trip.schedule_relationship);
 
