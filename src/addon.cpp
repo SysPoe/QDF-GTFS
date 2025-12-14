@@ -384,6 +384,7 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
 
             stu_obj.Set("stop_id", stu.stop_id);
             stu_obj.Set("trip_id", stu.trip_id);
+            stu_obj.Set("start_date", stu.start_date);
 
             if (stu.arrival_delay != -2147483648) stu_obj.Set("arrival_delay", stu.arrival_delay);
             else stu_obj.Set("arrival_delay", env.Null());

@@ -141,6 +141,8 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
             stu.schedule_relationship = pb_stu.schedule_relationship;
             // Propagate trip_id
             stu.trip_id = inner_ctx->current_update.trip.trip_id;
+            // Propagate start_date from trip update
+            stu.start_date = inner_ctx->current_update.trip.start_date;
 
             if (pb_stu.has_arrival) {
                 if (pb_stu.arrival.has_delay) stu.arrival_delay = pb_stu.arrival.delay;
