@@ -50,6 +50,10 @@ int parse_time_seconds(const std::string& time_str) {
         ptr++;
     }
 
+    // Skip trailing whitespace
+    while (*ptr == ' ') ptr++;
+    // If not at end of string, invalid input
+    if (*ptr != '\0') return -1;
     // Validate minutes and seconds are in [0, 59]
     if (m < 0 || m > 59 || s < 0 || s > 59) return -1;
     return h * 3600 + m * 60 + s;
