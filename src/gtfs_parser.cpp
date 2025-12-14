@@ -15,6 +15,9 @@ namespace gtfs {
 using LogFn = std::function<void(const std::string&)>;
 using ProgressFn = std::function<void(std::string task, int64_t current, int64_t total)>;
 
+// Emit progress roughly every 64KB processed per file
+constexpr size_t PROGRESS_CHUNK_BYTES = 64 * 1024;
+
 // Helper to convert "HH:MM:SS" to seconds
 int parse_time_seconds(const std::string& time_str) {
     if (time_str.empty()) return -1;
@@ -94,11 +97,21 @@ bool get_bool(const std::vector<std::string>& row, int index, bool default_val =
 }
 
 
-size_t parse_agency(GTFSData& data, const std::string& content) {
+size_t parse_agency(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line); // Header
     if (line.empty()) return 0;
+
+    size_t bytes_read = line.size() + 1;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            on_progress(bytes);
+            last_report = bytes;
+        }
+    };
+    report_progress(bytes_read);
 
     auto headers = parse_csv_line(line);
     int id_idx = get_col_index(headers, "agency_id");
@@ -112,6 +125,7 @@ size_t parse_agency(GTFSData& data, const std::string& content) {
 
     size_t count = 0;
     while (std::getline(ss, line)) {
+        bytes_read += line.size() + 1;
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         Agency a;
@@ -125,15 +139,27 @@ size_t parse_agency(GTFSData& data, const std::string& content) {
         a.agency_email = get_val(row, email_idx);
         data.agencies[a.agency_id] = a;
         count++;
+        report_progress(bytes_read);
     }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read);
     return count;
 }
 
-size_t parse_routes(GTFSData& data, const std::string& content) {
+size_t parse_routes(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    size_t bytes_read = line.size() + 1;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            on_progress(bytes);
+            last_report = bytes;
+        }
+    };
+    report_progress(bytes_read);
 
     auto headers = parse_csv_line(line);
     int id_idx = get_col_index(headers, "route_id");
@@ -150,6 +176,7 @@ size_t parse_routes(GTFSData& data, const std::string& content) {
 
     size_t count = 0;
     while (std::getline(ss, line)) {
+        bytes_read += line.size() + 1;
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         Route r;
@@ -166,15 +193,27 @@ size_t parse_routes(GTFSData& data, const std::string& content) {
         r.continuous_drop_off = get_int(row, cont_drop_off_idx, 1);
         data.routes[r.route_id] = r;
         count++;
+        report_progress(bytes_read);
     }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read);
     return count;
 }
 
-size_t parse_trips(GTFSData& data, const std::string& content) {
+size_t parse_trips(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    size_t bytes_read = line.size() + 1;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            on_progress(bytes);
+            last_report = bytes;
+        }
+    };
+    report_progress(bytes_read);
 
     auto headers = parse_csv_line(line);
     int route_id_idx = get_col_index(headers, "route_id");
@@ -190,6 +229,7 @@ size_t parse_trips(GTFSData& data, const std::string& content) {
 
     size_t count = 0;
     while (std::getline(ss, line)) {
+        bytes_read += line.size() + 1;
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         Trip t;
@@ -205,15 +245,27 @@ size_t parse_trips(GTFSData& data, const std::string& content) {
         t.bikes_allowed = get_int(row, bikes_idx);
         data.trips[t.trip_id] = t;
         count++;
+        report_progress(bytes_read);
     }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read);
     return count;
 }
 
-size_t parse_stops(GTFSData& data, const std::string& content) {
+size_t parse_stops(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    size_t bytes_read = line.size() + 1;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            on_progress(bytes);
+            last_report = bytes;
+        }
+    };
+    report_progress(bytes_read);
 
     auto headers = parse_csv_line(line);
     int id_idx = get_col_index(headers, "stop_id");
@@ -233,6 +285,7 @@ size_t parse_stops(GTFSData& data, const std::string& content) {
 
     size_t count = 0;
     while (std::getline(ss, line)) {
+        bytes_read += line.size() + 1;
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         Stop s;
@@ -252,12 +305,14 @@ size_t parse_stops(GTFSData& data, const std::string& content) {
         s.platform_code = get_val(row, platform_idx);
         data.stops[s.stop_id] = s;
         count++;
+        report_progress(bytes_read);
     }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read);
     return count;
 }
 
 // Updated to output to a specific vector, useful for multithreading
-size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t length, const std::vector<std::string>& headers, std::vector<StopTime>& out_vec) {
+size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t length, const std::vector<std::string>& headers, std::vector<StopTime>& out_vec, const std::function<void(size_t)>& on_progress = nullptr) {
     std::string content(start, length);
     std::stringstream ss(content);
     std::string line;
@@ -275,8 +330,19 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
     int cont_pickup_idx = get_col_index(headers, "continuous_pickup");
     int cont_drop_off_idx = get_col_index(headers, "continuous_drop_off");
 
+    size_t bytes_read = 0;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            size_t delta = bytes - last_report;
+            on_progress(delta);
+            last_report += delta;
+        }
+    };
+
     size_t count = 0;
     while (std::getline(ss, line)) {
+        bytes_read += line.size() + 1; // include newline
         if (line.empty()) continue;
 
         auto row = parse_csv_line(line);
@@ -295,15 +361,27 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
         st.continuous_drop_off = get_int(row, cont_drop_off_idx, 1);
         out_vec.push_back(st);
         count++;
+        report_progress(bytes_read);
     }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read - last_report);
     return count;
 }
 
-size_t parse_calendar(GTFSData& data, const std::string& content) {
+size_t parse_calendar(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    size_t bytes_read = line.size() + 1;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            on_progress(bytes);
+            last_report = bytes;
+        }
+    };
+    report_progress(bytes_read);
 
     auto headers = parse_csv_line(line);
     int service_id_idx = get_col_index(headers, "service_id");
@@ -319,6 +397,7 @@ size_t parse_calendar(GTFSData& data, const std::string& content) {
 
     size_t count = 0;
     while (std::getline(ss, line)) {
+        bytes_read += line.size() + 1;
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         Calendar c;
@@ -334,15 +413,27 @@ size_t parse_calendar(GTFSData& data, const std::string& content) {
         c.end_date = get_val(row, end_idx);
         data.calendars[c.service_id] = c;
         count++;
+        report_progress(bytes_read);
     }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read);
     return count;
 }
 
-size_t parse_calendar_dates(GTFSData& data, const std::string& content) {
+size_t parse_calendar_dates(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    size_t bytes_read = line.size() + 1;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            on_progress(bytes);
+            last_report = bytes;
+        }
+    };
+    report_progress(bytes_read);
 
     auto headers = parse_csv_line(line);
     int service_id_idx = get_col_index(headers, "service_id");
@@ -351,6 +442,7 @@ size_t parse_calendar_dates(GTFSData& data, const std::string& content) {
 
     size_t count = 0;
     while (std::getline(ss, line)) {
+        bytes_read += line.size() + 1;
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         std::string service_id = get_val(row, service_id_idx);
@@ -358,15 +450,27 @@ size_t parse_calendar_dates(GTFSData& data, const std::string& content) {
         int exc = get_int(row, exc_idx);
         data.calendar_dates[service_id][date] = exc;
         count++;
+        report_progress(bytes_read);
     }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read);
     return count;
 }
 
-size_t parse_shapes(GTFSData& data, const std::string& content) {
+size_t parse_shapes(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    size_t bytes_read = line.size() + 1;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            on_progress(bytes);
+            last_report = bytes;
+        }
+    };
+    report_progress(bytes_read);
 
     auto headers = parse_csv_line(line);
     int id_idx = get_col_index(headers, "shape_id");
@@ -377,6 +481,7 @@ size_t parse_shapes(GTFSData& data, const std::string& content) {
 
     size_t count = 0;
     while (std::getline(ss, line)) {
+        bytes_read += line.size() + 1;
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         Shape s;
@@ -387,15 +492,27 @@ size_t parse_shapes(GTFSData& data, const std::string& content) {
         s.shape_dist_traveled = get_double(row, dist_idx);
         data.shapes.push_back(s);
         count++;
+        report_progress(bytes_read);
     }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read);
     return count;
 }
 
-size_t parse_feed_info(GTFSData& data, const std::string& content) {
+size_t parse_feed_info(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    size_t bytes_read = line.size() + 1;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            on_progress(bytes);
+            last_report = bytes;
+        }
+    };
+    report_progress(bytes_read);
 
     auto headers = parse_csv_line(line);
     int pub_name_idx = get_col_index(headers, "feed_publisher_name");
@@ -410,6 +527,7 @@ size_t parse_feed_info(GTFSData& data, const std::string& content) {
 
     size_t count = 0;
     while (std::getline(ss, line)) {
+        bytes_read += line.size() + 1;
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         FeedInfo f;
@@ -424,7 +542,9 @@ size_t parse_feed_info(GTFSData& data, const std::string& content) {
         f.feed_contact_url = get_val(row, contact_url_idx);
         data.feed_info.push_back(f);
         count++;
+        report_progress(bytes_read);
     }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read);
     return count;
 }
 
@@ -484,8 +604,15 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
     auto process_file = [&](auto parser_func, const std::string& filename) -> size_t {
         if (file_contents.find(filename) == file_contents.end()) return 0;
         const std::string& content = file_contents[filename];
-        size_t count = parser_func(data, content);
-        
+        auto inline_progress = [&](size_t file_bytes_done) {
+            if (!progress) return;
+            int64_t current = processed_bytes.load(std::memory_order_relaxed) + static_cast<int64_t>(file_bytes_done);
+            if (current > total_uncompressed_size) current = total_uncompressed_size;
+            progress("Loading GTFS Data", current, total_uncompressed_size);
+        };
+
+        size_t count = parser_func(data, content, inline_progress);
+
         int64_t current = processed_bytes.fetch_add(content.size()) + content.size();
         if (progress) progress("Loading GTFS Data", current, total_uncompressed_size);
         if (log) log("Loaded " + std::to_string(count) + " entries from " + filename);
@@ -534,6 +661,10 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
             size_t total_length = content.length();
             if (start_pos >= total_length) return 0;
 
+            // Count header bytes toward progress
+            processed_bytes.fetch_add(header_end + 1);
+            if (progress) progress("Loading GTFS Data", processed_bytes.load(std::memory_order_relaxed), total_uncompressed_size);
+
             unsigned int thread_count = std::thread::hardware_concurrency();
             if (thread_count == 0) thread_count = 4;
 
@@ -566,11 +697,17 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
                         std::vector<StopTime> vec;
                         // Pre-allocate some memory (Rough estimate: 50 bytes per line)
                         vec.reserve(len / 50);
-                        parse_stop_times_chunk(data.string_pool, ptr, len, headers, vec);
-                        
-                        int64_t current = processed_bytes.fetch_add(len) + len;
-                        if (progress) progress("Loading GTFS Data", current, total_uncompressed_size);
-                        
+
+                        auto chunk_progress = [&](size_t delta_bytes) {
+                            int64_t current = processed_bytes.fetch_add(static_cast<int64_t>(delta_bytes)) + static_cast<int64_t>(delta_bytes);
+                            if (progress) {
+                                if (current > total_uncompressed_size) current = total_uncompressed_size;
+                                progress("Loading GTFS Data", current, total_uncompressed_size);
+                            }
+                        };
+
+                        parse_stop_times_chunk(data.string_pool, ptr, len, headers, vec, chunk_progress);
+
                         return vec;
                     }
                 ));
