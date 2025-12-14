@@ -18,17 +18,48 @@ using ProgressFn = std::function<void(std::string task, int64_t current, int64_t
 // Helper to convert "HH:MM:SS" to seconds
 int parse_time_seconds(const std::string& time_str) {
     if (time_str.empty()) return -1;
-    int h, m, s;
-    if (std::sscanf(time_str.c_str(), "%d:%d:%d", &h, &m, &s) == 3) {
-        return h * 3600 + m * 60 + s;
+    const char* ptr = time_str.c_str();
+
+    // Skip leading whitespace
+    while (*ptr == ' ') ptr++;
+
+    int h = 0, m = 0, s = 0;
+
+    // Parse hours
+    if (*ptr < '0' || *ptr > '9') return -1;
+    while (*ptr >= '0' && *ptr <= '9') {
+        h = h * 10 + (*ptr - '0');
+        ptr++;
     }
-    return -1;
+    if (*ptr != ':') return -1;
+    ptr++;
+
+    // Parse minutes
+    if (*ptr < '0' || *ptr > '9') return -1;
+    while (*ptr >= '0' && *ptr <= '9') {
+        m = m * 10 + (*ptr - '0');
+        ptr++;
+    }
+    if (*ptr != ':') return -1;
+    ptr++;
+
+    // Parse seconds
+    if (*ptr < '0' || *ptr > '9') return -1;
+    while (*ptr >= '0' && *ptr <= '9') {
+        s = s * 10 + (*ptr - '0');
+        ptr++;
+    }
+
+    return h * 3600 + m * 60 + s;
 }
 
 // Improved CSV parser
 std::vector<std::string> parse_csv_line(const std::string& line) {
     std::vector<std::string> result;
+    result.reserve(16); // Pre-allocate for typical GTFS row size
     std::string cell;
+    cell.reserve(64);
+
     bool inside_quotes = false;
     for (size_t i = 0; i < line.length(); ++i) {
         char c = line[i];
@@ -40,15 +71,15 @@ std::vector<std::string> parse_csv_line(const std::string& line) {
                 inside_quotes = !inside_quotes;
             }
         } else if (c == ',' && !inside_quotes) {
-            result.push_back(cell);
-            cell.clear();
+            result.push_back(std::move(cell));
+            cell.clear(); // string is in valid state after move, clear resets it
         } else if (c == '\r') {
              continue;
         } else {
             cell += c;
         }
     }
-    result.push_back(cell);
+    result.push_back(std::move(cell));
     return result;
 }
 
