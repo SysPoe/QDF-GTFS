@@ -50,6 +50,8 @@ int parse_time_seconds(const std::string& time_str) {
         ptr++;
     }
 
+    // Validate minutes and seconds are in [0, 59]
+    if (m < 0 || m > 59 || s < 0 || s > 59) return -1;
     return h * 3600 + m * 60 + s;
 }
 
