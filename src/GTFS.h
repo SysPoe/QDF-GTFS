@@ -189,12 +189,6 @@ struct RealtimeStopTimeUpdate {
     std::string trip_id;
     std::string start_date; // Reflect start_date from trip update
     std::string start_time; // Reflect start_time from trip update
-    // 0 is a valid delay, need careful handling. Actually proto optional int32 defaults to 0 but has_ flag. We'll use INT_MIN or explicit logic? Let's use -999999 as sentinel for delay? No, delay can be negative. Let's use a struct or separate bool?
-    // For simplicity with JS null, we can use a pointer or std::optional-like approach,
-    // but sticking to simple sentinels for now.
-    // INT32_MIN is -2147483648. Unlikely for delay?
-    // Let's use a dedicated "undefined" value like -2147483648 for integers that can be negative.
-    // For unsigned or positive-only, -1 is fine.
     int arrival_delay = -2147483648;
     int64_t arrival_time = -1;
     int arrival_uncertainty = -1;
@@ -212,14 +206,7 @@ struct RealtimeTripUpdate {
     RealtimeTripDescriptor trip;
     RealtimeVehicleDescriptor vehicle;
     std::vector<RealtimeStopTimeUpdate> stop_time_updates;
-    uint64_t timestamp = 0; // 0 is technically 1970, but usually means missing in GTFS-RT context?
-    // Proto says: "If missing, the interval starts at minus infinity." for ranges.
-    // For timestamp: "If missing...".
-    // Let's use 0 as "missing" for uint64 timestamps since 1970 is unlikely valid for *realtime* data updates?
-    // Actually, let's allow 0 and use another way? No, 0 is fine for timestamp sentinel if we treat it as null.
-    // But Wait, 0 is valid. Let's use 0 for now as previously defined, but maybe we need a separate flag?
-    // Let's use 0 as sentinel for timestamp.
-
+    uint64_t timestamp = 0;
     int delay = -2147483648;
 };
 
@@ -276,12 +263,7 @@ public:
     std::unordered_map<std::string, Stop> stops;
     
     std::vector<StopTime> stop_times; 
-    
-    // Secondary index: stop_id (string) -> indices. 
-    // Optimization: Use interned ID as key? 
-    // std::unordered_map<uint32_t, std::vector<size_t>>
-    // But queries come in as strings. 
-    // Let's use uint32_t for map key to save memory too!
+
     std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_stop_id;
 
     std::unordered_map<std::string, Trip> trips;
