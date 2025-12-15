@@ -188,6 +188,7 @@ struct RealtimeStopTimeUpdate {
     std::string stop_id;
     std::string trip_id;
     std::string start_date; // Reflect start_date from trip update
+    std::string start_time; // Reflect start_time from trip update
     // 0 is a valid delay, need careful handling. Actually proto optional int32 defaults to 0 but has_ flag. We'll use INT_MIN or explicit logic? Let's use -999999 as sentinel for delay? No, delay can be negative. Let's use a struct or separate bool?
     // For simplicity with JS null, we can use a pointer or std::optional-like approach,
     // but sticking to simple sentinels for now.

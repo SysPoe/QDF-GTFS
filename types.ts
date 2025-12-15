@@ -259,7 +259,8 @@ export interface RealtimeStopTimeUpdate {
     stop_sequence: number | null;
     stop_id: string;
     trip_id: string;
-    start_date: string;
+    start_date: string | null;
+    start_time: string | null;
     arrival_delay: number | null;
     arrival_time: number | null;
     arrival_uncertainty: number | null;
