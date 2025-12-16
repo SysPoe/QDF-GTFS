@@ -18,6 +18,16 @@ using ProgressFn = std::function<void(std::string task, int64_t current, int64_t
 // Emit progress roughly every 64KB processed per file
 constexpr size_t PROGRESS_CHUNK_BYTES = 64 * 1024;
 
+// Helper to remove UTF-8 BOM if present
+void remove_bom(std::string& line) {
+    if (line.size() >= 3 && 
+        static_cast<unsigned char>(line[0]) == 0xEF && 
+        static_cast<unsigned char>(line[1]) == 0xBB && 
+        static_cast<unsigned char>(line[2]) == 0xBF) {
+        line.erase(0, 3);
+    }
+}
+
 // Helper to convert "HH:MM:SS" to seconds
 int parse_time_seconds(const std::string& time_str) {
     if (time_str.empty()) return -1;
@@ -137,8 +147,10 @@ bool get_bool(const std::vector<std::string>& row, int index, bool default_val =
 size_t parse_agency(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
-    std::getline(ss, line); // Header
+    std::getline(ss, line);
     if (line.empty()) return 0;
+
+    remove_bom(line);
 
     size_t bytes_read = line.size() + 1;
     size_t last_report = 0;
@@ -166,15 +178,24 @@ size_t parse_agency(GTFSData& data, const std::string& content, const std::funct
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         Agency a;
-        a.agency_id = get_val(row, id_idx);
+        std::string tmp;
+        tmp = get_val(row, id_idx);
+        if (!tmp.empty()) a.agency_id = tmp;
         a.agency_name = get_val(row, name_idx);
         a.agency_url = get_val(row, url_idx);
         a.agency_timezone = get_val(row, tz_idx);
-        a.agency_lang = get_val(row, lang_idx);
-        a.agency_phone = get_val(row, phone_idx);
-        a.agency_fare_url = get_val(row, fare_url_idx);
-        a.agency_email = get_val(row, email_idx);
-        data.agencies[a.agency_id] = a;
+        tmp = get_val(row, lang_idx);
+        if (!tmp.empty()) a.agency_lang = tmp;
+        tmp = get_val(row, phone_idx);
+        if (!tmp.empty()) a.agency_phone = tmp;
+        tmp = get_val(row, fare_url_idx);
+        if (!tmp.empty()) a.agency_fare_url = tmp;
+        tmp = get_val(row, email_idx);
+        if (!tmp.empty()) a.agency_email = tmp;
+        // Use agency_id if present, otherwise fall back to agency_name as key
+        std::string key = a.agency_id.has_value() ? a.agency_id.value() : a.agency_name;
+        if (!a.agency_id.has_value()) a.agency_id = key; // ensure a usable id exists
+        data.agencies[key] = a;
         count++;
         report_progress(bytes_read);
     }
@@ -187,6 +208,8 @@ size_t parse_routes(GTFSData& data, const std::string& content, const std::funct
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    remove_bom(line);
 
     size_t bytes_read = line.size() + 1;
     size_t last_report = 0;
@@ -210,6 +233,8 @@ size_t parse_routes(GTFSData& data, const std::string& content, const std::funct
     int text_color_idx = get_col_index(headers, "route_text_color");
     int cont_pickup_idx = get_col_index(headers, "continuous_pickup");
     int cont_drop_off_idx = get_col_index(headers, "continuous_drop_off");
+    int sort_order_idx = get_col_index(headers, "route_sort_order");
+    int network_id_idx = get_col_index(headers, "network_id");
 
     size_t count = 0;
     while (std::getline(ss, line)) {
@@ -217,17 +242,31 @@ size_t parse_routes(GTFSData& data, const std::string& content, const std::funct
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         Route r;
+        std::string tmp;
         r.route_id = get_val(row, id_idx);
-        r.agency_id = get_val(row, agency_id_idx);
-        r.route_short_name = get_val(row, short_name_idx);
-        r.route_long_name = get_val(row, long_name_idx);
-        r.route_desc = get_val(row, desc_idx);
+        tmp = get_val(row, agency_id_idx);
+        if (!tmp.empty()) r.agency_id = tmp;
+        tmp = get_val(row, short_name_idx);
+        if (!tmp.empty()) r.route_short_name = tmp;
+        tmp = get_val(row, long_name_idx);
+        if (!tmp.empty()) r.route_long_name = tmp;
+        tmp = get_val(row, desc_idx);
+        if (!tmp.empty()) r.route_desc = tmp;
         r.route_type = get_int(row, type_idx);
-        r.route_url = get_val(row, url_idx);
-        r.route_color = get_val(row, color_idx);
-        r.route_text_color = get_val(row, text_color_idx);
-        r.continuous_pickup = get_int(row, cont_pickup_idx, 1);
-        r.continuous_drop_off = get_int(row, cont_drop_off_idx, 1);
+        tmp = get_val(row, url_idx);
+        if (!tmp.empty()) r.route_url = tmp;
+        tmp = get_val(row, color_idx);
+        if (!tmp.empty()) r.route_color = tmp;
+        tmp = get_val(row, text_color_idx);
+        if (!tmp.empty()) r.route_text_color = tmp;
+        tmp = get_val(row, cont_pickup_idx);
+        if (!tmp.empty()) r.continuous_pickup = get_int(row, cont_pickup_idx);
+        tmp = get_val(row, cont_drop_off_idx);
+        if (!tmp.empty()) r.continuous_drop_off = get_int(row, cont_drop_off_idx);
+        tmp = get_val(row, sort_order_idx);
+        if (!tmp.empty()) r.route_sort_order = get_int(row, sort_order_idx);
+        tmp = get_val(row, network_id_idx);
+        if (!tmp.empty()) r.network_id = tmp;
         data.routes[r.route_id] = r;
         count++;
         report_progress(bytes_read);
@@ -241,6 +280,8 @@ size_t parse_trips(GTFSData& data, const std::string& content, const std::functi
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    remove_bom(line);
 
     size_t bytes_read = line.size() + 1;
     size_t last_report = 0;
@@ -270,16 +311,24 @@ size_t parse_trips(GTFSData& data, const std::string& content, const std::functi
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         Trip t;
+        std::string tmp;
         t.route_id = get_val(row, route_id_idx);
         t.service_id = get_val(row, service_id_idx);
         t.trip_id = get_val(row, trip_id_idx);
-        t.trip_headsign = get_val(row, headsign_idx);
-        t.trip_short_name = get_val(row, short_name_idx);
-        t.direction_id = get_int(row, direction_id_idx);
-        t.block_id = get_val(row, block_id_idx);
-        t.shape_id = get_val(row, shape_id_idx);
-        t.wheelchair_accessible = get_int(row, wheelchair_idx);
-        t.bikes_allowed = get_int(row, bikes_idx);
+        tmp = get_val(row, headsign_idx);
+        if (!tmp.empty()) t.trip_headsign = tmp;
+        tmp = get_val(row, short_name_idx);
+        if (!tmp.empty()) t.trip_short_name = tmp;
+        tmp = get_val(row, direction_id_idx);
+        if (!tmp.empty()) t.direction_id = get_int(row, direction_id_idx);
+        tmp = get_val(row, block_id_idx);
+        if (!tmp.empty()) t.block_id = tmp;
+        tmp = get_val(row, shape_id_idx);
+        if (!tmp.empty()) t.shape_id = tmp;
+        tmp = get_val(row, wheelchair_idx);
+        if (!tmp.empty()) t.wheelchair_accessible = get_int(row, wheelchair_idx);
+        tmp = get_val(row, bikes_idx);
+        if (!tmp.empty()) t.bikes_allowed = get_int(row, bikes_idx);
         data.trips[t.trip_id] = t;
         count++;
         report_progress(bytes_read);
@@ -293,6 +342,8 @@ size_t parse_stops(GTFSData& data, const std::string& content, const std::functi
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    remove_bom(line);
 
     size_t bytes_read = line.size() + 1;
     size_t last_report = 0;
@@ -326,20 +377,33 @@ size_t parse_stops(GTFSData& data, const std::string& content, const std::functi
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         Stop s;
+        std::string tmp;
         s.stop_id = get_val(row, id_idx);
-        s.stop_code = get_val(row, code_idx);
+        tmp = get_val(row, code_idx);
+        if (!tmp.empty()) s.stop_code = tmp;
         s.stop_name = get_val(row, name_idx);
-        s.stop_desc = get_val(row, desc_idx);
-        s.stop_lat = get_double(row, lat_idx);
-        s.stop_lon = get_double(row, lon_idx);
-        s.zone_id = get_val(row, zone_idx);
-        s.stop_url = get_val(row, url_idx);
-        s.location_type = get_int(row, loc_type_idx);
-        s.parent_station = get_val(row, parent_idx);
-        s.stop_timezone = get_val(row, tz_idx);
-        s.wheelchair_boarding = get_int(row, wheelchair_idx);
-        s.level_id = get_val(row, level_idx);
-        s.platform_code = get_val(row, platform_idx);
+        tmp = get_val(row, desc_idx);
+        if (!tmp.empty()) s.stop_desc = tmp;
+        tmp = get_val(row, lat_idx);
+        if (!tmp.empty()) s.stop_lat = get_double(row, lat_idx);
+        tmp = get_val(row, lon_idx);
+        if (!tmp.empty()) s.stop_lon = get_double(row, lon_idx);
+        tmp = get_val(row, zone_idx);
+        if (!tmp.empty()) s.zone_id = tmp;
+        tmp = get_val(row, url_idx);
+        if (!tmp.empty()) s.stop_url = tmp;
+        tmp = get_val(row, loc_type_idx);
+        if (!tmp.empty()) s.location_type = get_int(row, loc_type_idx);
+        tmp = get_val(row, parent_idx);
+        if (!tmp.empty()) s.parent_station = tmp;
+        tmp = get_val(row, tz_idx);
+        if (!tmp.empty()) s.stop_timezone = tmp;
+        tmp = get_val(row, wheelchair_idx);
+        if (!tmp.empty()) s.wheelchair_boarding = get_int(row, wheelchair_idx);
+        tmp = get_val(row, level_idx);
+        if (!tmp.empty()) s.level_id = tmp;
+        tmp = get_val(row, platform_idx);
+        if (!tmp.empty()) s.platform_code = tmp;
         data.stops[s.stop_id] = s;
         count++;
         report_progress(bytes_read);
@@ -353,6 +417,8 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
     std::string content(start, length);
     std::stringstream ss(content);
     std::string line;
+
+    remove_bom(line);
 
     int trip_id_idx = get_col_index(headers, "trip_id");
     int arrival_idx = get_col_index(headers, "arrival_time");
@@ -384,18 +450,32 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
 
         auto row = parse_csv_line(line);
         StopTime st;
+        std::string tmp;
         st.trip_id = string_pool.intern(get_val(row, trip_id_idx));
-        st.arrival_time = parse_time_seconds(get_val(row, arrival_idx));
-        st.departure_time = parse_time_seconds(get_val(row, departure_idx));
+        tmp = get_val(row, arrival_idx);
+        {
+            int t = parse_time_seconds(tmp);
+            if (t != -1) st.arrival_time = t;
+        }
+        tmp = get_val(row, departure_idx);
+        {
+            int t = parse_time_seconds(tmp);
+            if (t != -1) st.departure_time = t;
+        }
         st.stop_id = string_pool.intern(get_val(row, stop_id_idx));
         st.stop_sequence = get_int(row, seq_idx);
-        st.stop_headsign = string_pool.intern(get_val(row, headsign_idx));
+        tmp = get_val(row, headsign_idx);
+        if (!tmp.empty()) st.stop_headsign = string_pool.intern(tmp);
         st.pickup_type = get_int(row, pickup_idx);
         st.drop_off_type = get_int(row, drop_off_idx);
-        st.shape_dist_traveled = get_double(row, dist_idx);
-        st.timepoint = get_int(row, timepoint_idx);
-        st.continuous_pickup = get_int(row, cont_pickup_idx, 1);
-        st.continuous_drop_off = get_int(row, cont_drop_off_idx, 1);
+        tmp = get_val(row, dist_idx);
+        if (!tmp.empty()) st.shape_dist_traveled = get_double(row, dist_idx);
+        tmp = get_val(row, timepoint_idx);
+        if (!tmp.empty()) st.timepoint = get_int(row, timepoint_idx);
+        tmp = get_val(row, cont_pickup_idx);
+        if (!tmp.empty()) st.continuous_pickup = get_int(row, cont_pickup_idx);
+        tmp = get_val(row, cont_drop_off_idx);
+        if (!tmp.empty()) st.continuous_drop_off = get_int(row, cont_drop_off_idx);
         out_vec.push_back(st);
         count++;
         report_progress(bytes_read);
@@ -409,6 +489,8 @@ size_t parse_calendar(GTFSData& data, const std::string& content, const std::fun
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    remove_bom(line);
 
     size_t bytes_read = line.size() + 1;
     size_t last_report = 0;
@@ -462,6 +544,8 @@ size_t parse_calendar_dates(GTFSData& data, const std::string& content, const st
     std::getline(ss, line);
     if (line.empty()) return 0;
 
+    remove_bom(line);
+
     size_t bytes_read = line.size() + 1;
     size_t last_report = 0;
     auto report_progress = [&](size_t bytes) {
@@ -499,6 +583,8 @@ size_t parse_shapes(GTFSData& data, const std::string& content, const std::funct
     std::getline(ss, line);
     if (line.empty()) return 0;
 
+    remove_bom(line);
+
     size_t bytes_read = line.size() + 1;
     size_t last_report = 0;
     auto report_progress = [&](size_t bytes) {
@@ -526,7 +612,8 @@ size_t parse_shapes(GTFSData& data, const std::string& content, const std::funct
         s.shape_pt_lat = get_double(row, lat_idx);
         s.shape_pt_lon = get_double(row, lon_idx);
         s.shape_pt_sequence = get_int(row, seq_idx);
-        s.shape_dist_traveled = get_double(row, dist_idx);
+        std::string tmp = get_val(row, dist_idx);
+        if (!tmp.empty()) s.shape_dist_traveled = get_double(row, dist_idx);
         data.shapes.push_back(s);
         count++;
         report_progress(bytes_read);
@@ -540,6 +627,8 @@ size_t parse_feed_info(GTFSData& data, const std::string& content, const std::fu
     std::string line;
     std::getline(ss, line);
     if (line.empty()) return 0;
+
+    remove_bom(line);
 
     size_t bytes_read = line.size() + 1;
     size_t last_report = 0;
@@ -568,15 +657,22 @@ size_t parse_feed_info(GTFSData& data, const std::string& content, const std::fu
         if (line.empty()) continue;
         auto row = parse_csv_line(line);
         FeedInfo f;
+        std::string tmp;
         f.feed_publisher_name = get_val(row, pub_name_idx);
         f.feed_publisher_url = get_val(row, pub_url_idx);
         f.feed_lang = get_val(row, lang_idx);
-        f.default_lang = get_val(row, def_lang_idx);
-        f.feed_start_date = get_val(row, start_idx);
-        f.feed_end_date = get_val(row, end_idx);
-        f.feed_version = get_val(row, ver_idx);
-        f.feed_contact_email = get_val(row, email_idx);
-        f.feed_contact_url = get_val(row, contact_url_idx);
+        tmp = get_val(row, def_lang_idx);
+        if (!tmp.empty()) f.default_lang = tmp;
+        tmp = get_val(row, start_idx);
+        if (!tmp.empty()) f.feed_start_date = tmp;
+        tmp = get_val(row, end_idx);
+        if (!tmp.empty()) f.feed_end_date = tmp;
+        tmp = get_val(row, ver_idx);
+        if (!tmp.empty()) f.feed_version = tmp;
+        tmp = get_val(row, email_idx);
+        if (!tmp.empty()) f.feed_contact_email = tmp;
+        tmp = get_val(row, contact_url_idx);
+        if (!tmp.empty()) f.feed_contact_url = tmp;
         data.feed_info.push_back(f);
         count++;
         report_progress(bytes_read);
@@ -692,6 +788,7 @@ void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_siz
             size_t header_end = content.find('\n');
             if (header_end == std::string::npos) return 0;
             std::string header_line = content.substr(0, header_end);
+            remove_bom(header_line);
             auto headers = parse_csv_line(header_line);
 
             size_t start_pos = header_end + 1;

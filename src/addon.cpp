@@ -252,14 +252,18 @@ Napi::Value GTFSAddon::GetRoute(const Napi::CallbackInfo& info) {
         auto& r = data.routes[route_id];
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("route_id", r.route_id);
-        obj.Set("agency_id", r.agency_id);
-        obj.Set("route_short_name", r.route_short_name);
-        obj.Set("route_long_name", r.route_long_name);
-        obj.Set("route_desc", r.route_desc);
+        if (r.agency_id.has_value()) obj.Set("agency_id", r.agency_id.value()); else obj.Set("agency_id", env.Null());
+        if (r.route_short_name.has_value()) obj.Set("route_short_name", r.route_short_name.value()); else obj.Set("route_short_name", env.Null());
+        if (r.route_long_name.has_value()) obj.Set("route_long_name", r.route_long_name.value()); else obj.Set("route_long_name", env.Null());
+        if (r.route_desc.has_value()) obj.Set("route_desc", r.route_desc.value()); else obj.Set("route_desc", env.Null());
         obj.Set("route_type", r.route_type);
-        obj.Set("route_url", r.route_url);
-        obj.Set("route_color", r.route_color);
-        obj.Set("route_text_color", r.route_text_color);
+        if (r.route_url.has_value()) obj.Set("route_url", r.route_url.value()); else obj.Set("route_url", env.Null());
+        if (r.route_color.has_value()) obj.Set("route_color", r.route_color.value()); else obj.Set("route_color", env.Null());
+        if (r.route_text_color.has_value()) obj.Set("route_text_color", r.route_text_color.value()); else obj.Set("route_text_color", env.Null());
+        if (r.continuous_pickup.has_value()) obj.Set("continuous_pickup", r.continuous_pickup.value()); else obj.Set("continuous_pickup", env.Null());
+        if (r.continuous_drop_off.has_value()) obj.Set("continuous_drop_off", r.continuous_drop_off.value()); else obj.Set("continuous_drop_off", env.Null());
+        if (r.route_sort_order.has_value()) obj.Set("route_sort_order", r.route_sort_order.value()); else obj.Set("route_sort_order", env.Null());
+        if (r.network_id.has_value()) obj.Set("network_id", r.network_id.value()); else obj.Set("network_id", env.Null());
         return obj;
     }
     return env.Null();
@@ -280,14 +284,14 @@ Napi::Value GTFSAddon::GetAgency(const Napi::CallbackInfo& info) {
 
     const auto& a = it->second;
     Napi::Object obj = Napi::Object::New(env);
-    obj.Set("agency_id", a.agency_id);
     obj.Set("agency_name", a.agency_name);
     obj.Set("agency_url", a.agency_url);
     obj.Set("agency_timezone", a.agency_timezone);
-    obj.Set("agency_lang", a.agency_lang);
-    obj.Set("agency_phone", a.agency_phone);
-    obj.Set("agency_fare_url", a.agency_fare_url);
-    obj.Set("agency_email", a.agency_email);
+    if (a.agency_id.has_value()) obj.Set("agency_id", a.agency_id.value()); else obj.Set("agency_id", env.Null());
+    if (a.agency_lang.has_value()) obj.Set("agency_lang", a.agency_lang.value()); else obj.Set("agency_lang", env.Null());
+    if (a.agency_phone.has_value()) obj.Set("agency_phone", a.agency_phone.value()); else obj.Set("agency_phone", env.Null());
+    if (a.agency_fare_url.has_value()) obj.Set("agency_fare_url", a.agency_fare_url.value()); else obj.Set("agency_fare_url", env.Null());
+    if (a.agency_email.has_value()) obj.Set("agency_email", a.agency_email.value()); else obj.Set("agency_email", env.Null());
     return obj;
 }
 
@@ -298,16 +302,18 @@ Napi::Value GTFSAddon::GetRoutes(const Napi::CallbackInfo& info) {
     for (const auto& [id, r] : data.routes) {
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("route_id", r.route_id);
-        obj.Set("agency_id", r.agency_id);
-        obj.Set("route_short_name", r.route_short_name);
-        obj.Set("route_long_name", r.route_long_name);
-        obj.Set("route_desc", r.route_desc);
+        if (r.agency_id.has_value()) obj.Set("agency_id", r.agency_id.value()); else obj.Set("agency_id", env.Null());
+        if (r.route_short_name.has_value()) obj.Set("route_short_name", r.route_short_name.value()); else obj.Set("route_short_name", env.Null());
+        if (r.route_long_name.has_value()) obj.Set("route_long_name", r.route_long_name.value()); else obj.Set("route_long_name", env.Null());
+        if (r.route_desc.has_value()) obj.Set("route_desc", r.route_desc.value()); else obj.Set("route_desc", env.Null());
         obj.Set("route_type", r.route_type);
-        obj.Set("route_url", r.route_url);
-        obj.Set("route_color", r.route_color);
-        obj.Set("route_text_color", r.route_text_color);
-        obj.Set("continuous_pickup", r.continuous_pickup);
-        obj.Set("continuous_drop_off", r.continuous_drop_off);
+        if (r.route_url.has_value()) obj.Set("route_url", r.route_url.value()); else obj.Set("route_url", env.Null());
+        if (r.route_color.has_value()) obj.Set("route_color", r.route_color.value()); else obj.Set("route_color", env.Null());
+        if (r.route_text_color.has_value()) obj.Set("route_text_color", r.route_text_color.value()); else obj.Set("route_text_color", env.Null());
+        if (r.continuous_pickup.has_value()) obj.Set("continuous_pickup", r.continuous_pickup.value()); else obj.Set("continuous_pickup", env.Null());
+        if (r.continuous_drop_off.has_value()) obj.Set("continuous_drop_off", r.continuous_drop_off.value()); else obj.Set("continuous_drop_off", env.Null());
+        if (r.route_sort_order.has_value()) obj.Set("route_sort_order", r.route_sort_order.value()); else obj.Set("route_sort_order", env.Null());
+        if (r.network_id.has_value()) obj.Set("network_id", r.network_id.value()); else obj.Set("network_id", env.Null());
         arr[i++] = obj;
     }
     return arr;
@@ -530,14 +536,14 @@ Napi::Value GTFSAddon::GetAgencies(const Napi::CallbackInfo& info) {
     int i = 0;
     for (const auto& [id, a] : data.agencies) {
         Napi::Object obj = Napi::Object::New(env);
-        obj.Set("agency_id", a.agency_id);
+        if (a.agency_id.has_value()) obj.Set("agency_id", a.agency_id.value()); else obj.Set("agency_id", env.Null());
         obj.Set("agency_name", a.agency_name);
         obj.Set("agency_url", a.agency_url);
         obj.Set("agency_timezone", a.agency_timezone);
-        obj.Set("agency_lang", a.agency_lang);
-        obj.Set("agency_phone", a.agency_phone);
-        obj.Set("agency_fare_url", a.agency_fare_url);
-        obj.Set("agency_email", a.agency_email);
+        if (a.agency_lang.has_value()) obj.Set("agency_lang", a.agency_lang.value()); else obj.Set("agency_lang", env.Null());
+        if (a.agency_phone.has_value()) obj.Set("agency_phone", a.agency_phone.value()); else obj.Set("agency_phone", env.Null());
+        if (a.agency_fare_url.has_value()) obj.Set("agency_fare_url", a.agency_fare_url.value()); else obj.Set("agency_fare_url", env.Null());
+        if (a.agency_email.has_value()) obj.Set("agency_email", a.agency_email.value()); else obj.Set("agency_email", env.Null());
         arr[i++] = obj;
     }
     return arr;
@@ -559,19 +565,20 @@ Napi::Value GTFSAddon::GetStop(const Napi::CallbackInfo& info) {
     const auto& s = it->second;
     Napi::Object obj = Napi::Object::New(env);
     obj.Set("stop_id", s.stop_id);
-    obj.Set("stop_code", s.stop_code);
+    if (s.stop_code.has_value()) obj.Set("stop_code", s.stop_code.value()); else obj.Set("stop_code", env.Null());
     obj.Set("stop_name", s.stop_name);
-    obj.Set("stop_desc", s.stop_desc);
-    obj.Set("stop_lat", s.stop_lat);
-    obj.Set("stop_lon", s.stop_lon);
-    obj.Set("zone_id", s.zone_id);
-    obj.Set("stop_url", s.stop_url);
-    obj.Set("location_type", s.location_type);
-    obj.Set("parent_station", s.parent_station);
-    obj.Set("stop_timezone", s.stop_timezone);
-    obj.Set("wheelchair_boarding", s.wheelchair_boarding);
-    obj.Set("level_id", s.level_id);
-    obj.Set("platform_code", s.platform_code);
+    if (s.stop_desc.has_value()) obj.Set("stop_desc", s.stop_desc.value()); else obj.Set("stop_desc", env.Null());
+    if (s.stop_lat.has_value()) obj.Set("stop_lat", s.stop_lat.value()); else obj.Set("stop_lat", env.Null());
+    if (s.stop_lon.has_value()) obj.Set("stop_lon", s.stop_lon.value()); else obj.Set("stop_lon", env.Null());
+    if (s.zone_id.has_value()) obj.Set("zone_id", s.zone_id.value()); else obj.Set("zone_id", env.Null());
+    if (s.stop_url.has_value()) obj.Set("stop_url", s.stop_url.value()); else obj.Set("stop_url", env.Null());
+    if (s.location_type.has_value()) obj.Set("location_type", s.location_type.value()); else obj.Set("location_type", env.Null());
+    if (s.parent_station.has_value()) obj.Set("parent_station", s.parent_station.value()); else obj.Set("parent_station", env.Null());
+    if (s.stop_timezone.has_value()) obj.Set("stop_timezone", s.stop_timezone.value()); else obj.Set("stop_timezone", env.Null());
+    if (s.wheelchair_boarding.has_value()) obj.Set("wheelchair_boarding", s.wheelchair_boarding.value()); else obj.Set("wheelchair_boarding", env.Null());
+    if (s.level_id.has_value()) obj.Set("level_id", s.level_id.value()); else obj.Set("level_id", env.Null());
+    if (s.platform_code.has_value()) obj.Set("platform_code", s.platform_code.value()); else obj.Set("platform_code", env.Null());
+    if (s.tts_stop_name.has_value()) obj.Set("tts_stop_name", s.tts_stop_name.value()); else obj.Set("tts_stop_name", env.Null());
     return obj;
 }
 
@@ -582,19 +589,20 @@ Napi::Value GTFSAddon::GetStops(const Napi::CallbackInfo& info) {
     for (const auto& [id, s] : data.stops) {
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("stop_id", s.stop_id);
-        obj.Set("stop_code", s.stop_code);
+        if (s.stop_code.has_value()) obj.Set("stop_code", s.stop_code.value()); else obj.Set("stop_code", env.Null());
         obj.Set("stop_name", s.stop_name);
-        obj.Set("stop_desc", s.stop_desc);
-        obj.Set("stop_lat", s.stop_lat);
-        obj.Set("stop_lon", s.stop_lon);
-        obj.Set("zone_id", s.zone_id);
-        obj.Set("stop_url", s.stop_url);
-        obj.Set("location_type", s.location_type);
-        obj.Set("parent_station", s.parent_station);
-        obj.Set("stop_timezone", s.stop_timezone);
-        obj.Set("wheelchair_boarding", s.wheelchair_boarding);
-        obj.Set("level_id", s.level_id);
-        obj.Set("platform_code", s.platform_code);
+        if (s.stop_desc.has_value()) obj.Set("stop_desc", s.stop_desc.value()); else obj.Set("stop_desc", env.Null());
+        if (s.stop_lat.has_value()) obj.Set("stop_lat", s.stop_lat.value()); else obj.Set("stop_lat", env.Null());
+        if (s.stop_lon.has_value()) obj.Set("stop_lon", s.stop_lon.value()); else obj.Set("stop_lon", env.Null());
+        if (s.zone_id.has_value()) obj.Set("zone_id", s.zone_id.value()); else obj.Set("zone_id", env.Null());
+        if (s.stop_url.has_value()) obj.Set("stop_url", s.stop_url.value()); else obj.Set("stop_url", env.Null());
+        if (s.location_type.has_value()) obj.Set("location_type", s.location_type.value()); else obj.Set("location_type", env.Null());
+        if (s.parent_station.has_value()) obj.Set("parent_station", s.parent_station.value()); else obj.Set("parent_station", env.Null());
+        if (s.stop_timezone.has_value()) obj.Set("stop_timezone", s.stop_timezone.value()); else obj.Set("stop_timezone", env.Null());
+        if (s.wheelchair_boarding.has_value()) obj.Set("wheelchair_boarding", s.wheelchair_boarding.value()); else obj.Set("wheelchair_boarding", env.Null());
+        if (s.level_id.has_value()) obj.Set("level_id", s.level_id.value()); else obj.Set("level_id", env.Null());
+        if (s.platform_code.has_value()) obj.Set("platform_code", s.platform_code.value()); else obj.Set("platform_code", env.Null());
+        if (s.tts_stop_name.has_value()) obj.Set("tts_stop_name", s.tts_stop_name.value()); else obj.Set("tts_stop_name", env.Null());
         arr[i++] = obj;
     }
     return arr;
@@ -630,17 +638,24 @@ Napi::Value GTFSAddon::GetStopTimesForTrip(const Napi::CallbackInfo& info) {
     for(auto it = range.first; it != range.second; ++it) {
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("trip_id", data.string_pool.get(it->trip_id));
-        obj.Set("arrival_time", it->arrival_time);
-        obj.Set("departure_time", it->departure_time);
+        if (it->arrival_time.has_value()) obj.Set("arrival_time", it->arrival_time.value());
+        else obj.Set("arrival_time", env.Null());
+        if (it->departure_time.has_value()) obj.Set("departure_time", it->departure_time.value());
+        else obj.Set("departure_time", env.Null());
         obj.Set("stop_id", data.string_pool.get(it->stop_id));
         obj.Set("stop_sequence", it->stop_sequence);
-        obj.Set("stop_headsign", data.string_pool.get(it->stop_headsign));
+        if (it->stop_headsign.has_value()) obj.Set("stop_headsign", data.string_pool.get(it->stop_headsign.value()));
+        else obj.Set("stop_headsign", env.Null());
         obj.Set("pickup_type", it->pickup_type);
         obj.Set("drop_off_type", it->drop_off_type);
-        obj.Set("shape_dist_traveled", it->shape_dist_traveled);
-        obj.Set("timepoint", it->timepoint);
-        obj.Set("continuous_pickup", it->continuous_pickup);
-        obj.Set("continuous_drop_off", it->continuous_drop_off);
+        if (it->shape_dist_traveled.has_value()) obj.Set("shape_dist_traveled", it->shape_dist_traveled.value());
+        else obj.Set("shape_dist_traveled", env.Null());
+        if (it->timepoint.has_value()) obj.Set("timepoint", it->timepoint.value());
+        else obj.Set("timepoint", env.Null());
+        if (it->continuous_pickup.has_value()) obj.Set("continuous_pickup", it->continuous_pickup.value());
+        else obj.Set("continuous_pickup", env.Null());
+        if (it->continuous_drop_off.has_value()) obj.Set("continuous_drop_off", it->continuous_drop_off.value());
+        else obj.Set("continuous_drop_off", env.Null());
         arr[i++] = obj;
     }
     return arr;
@@ -720,8 +735,8 @@ Napi::Value GTFSAddon::QueryStopTimes(const Napi::CallbackInfo& info) {
 
             // Time Check
             if (has_time_window) {
-                bool arrival_in = (st.arrival_time >= filter_start_time && st.arrival_time <= filter_end_time);
-                bool departure_in = (st.departure_time >= filter_start_time && st.departure_time <= filter_end_time);
+                bool arrival_in = (st.arrival_time.has_value() && st.arrival_time.value() >= filter_start_time && st.arrival_time.value() <= filter_end_time);
+                bool departure_in = (st.departure_time.has_value() && st.departure_time.value() >= filter_start_time && st.departure_time.value() <= filter_end_time);
                 if (!arrival_in && !departure_in) continue;
             }
 
@@ -756,8 +771,8 @@ Napi::Value GTFSAddon::QueryStopTimes(const Napi::CallbackInfo& info) {
                 if (has_trip_id && st.trip_id != filter_trip_id) continue;
 
                 if (has_time_window) {
-                    bool arrival_in = (st.arrival_time >= filter_start_time && st.arrival_time <= filter_end_time);
-                    bool departure_in = (st.departure_time >= filter_start_time && st.departure_time <= filter_end_time);
+                    bool arrival_in = (st.arrival_time.has_value() && st.arrival_time.value() >= filter_start_time && st.arrival_time.value() <= filter_end_time);
+                    bool departure_in = (st.departure_time.has_value() && st.departure_time.value() >= filter_start_time && st.departure_time.value() <= filter_end_time);
                     if (!arrival_in && !departure_in) continue;
                 }
 
@@ -788,8 +803,8 @@ Napi::Value GTFSAddon::QueryStopTimes(const Napi::CallbackInfo& info) {
             if (has_stop_id && st.stop_id != filter_stop_id) continue;
             
             if (has_time_window) {
-                bool arrival_in = (st.arrival_time >= filter_start_time && st.arrival_time <= filter_end_time);
-                bool departure_in = (st.departure_time >= filter_start_time && st.departure_time <= filter_end_time);
+                bool arrival_in = (st.arrival_time.has_value() && st.arrival_time.value() >= filter_start_time && st.arrival_time.value() <= filter_end_time);
+                bool departure_in = (st.departure_time.has_value() && st.departure_time.value() >= filter_start_time && st.departure_time.value() <= filter_end_time);
                 if (!arrival_in && !departure_in) continue;
             }
 
@@ -818,17 +833,24 @@ Napi::Value GTFSAddon::QueryStopTimes(const Napi::CallbackInfo& info) {
         const gtfs::StopTime* st = results[i];
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("trip_id", data.string_pool.get(st->trip_id));
-        obj.Set("arrival_time", st->arrival_time);
-        obj.Set("departure_time", st->departure_time);
+        if (st->arrival_time.has_value()) obj.Set("arrival_time", st->arrival_time.value());
+        else obj.Set("arrival_time", env.Null());
+        if (st->departure_time.has_value()) obj.Set("departure_time", st->departure_time.value());
+        else obj.Set("departure_time", env.Null());
         obj.Set("stop_id", data.string_pool.get(st->stop_id));
         obj.Set("stop_sequence", st->stop_sequence);
-        obj.Set("stop_headsign", data.string_pool.get(st->stop_headsign));
+        if (st->stop_headsign.has_value()) obj.Set("stop_headsign", data.string_pool.get(st->stop_headsign.value()));
+        else obj.Set("stop_headsign", env.Null());
         obj.Set("pickup_type", st->pickup_type);
         obj.Set("drop_off_type", st->drop_off_type);
-        obj.Set("shape_dist_traveled", st->shape_dist_traveled);
-        obj.Set("timepoint", st->timepoint);
-        obj.Set("continuous_pickup", st->continuous_pickup);
-        obj.Set("continuous_drop_off", st->continuous_drop_off);
+        if (st->shape_dist_traveled.has_value()) obj.Set("shape_dist_traveled", st->shape_dist_traveled.value());
+        else obj.Set("shape_dist_traveled", env.Null());
+        if (st->timepoint.has_value()) obj.Set("timepoint", st->timepoint.value());
+        else obj.Set("timepoint", env.Null());
+        if (st->continuous_pickup.has_value()) obj.Set("continuous_pickup", st->continuous_pickup.value());
+        else obj.Set("continuous_pickup", env.Null());
+        if (st->continuous_drop_off.has_value()) obj.Set("continuous_drop_off", st->continuous_drop_off.value());
+        else obj.Set("continuous_drop_off", env.Null());
         arr[i] = obj;
     }
     return arr;
@@ -842,12 +864,12 @@ Napi::Value GTFSAddon::GetFeedInfo(const Napi::CallbackInfo& info) {
         obj.Set("feed_publisher_name", data.feed_info[i].feed_publisher_name);
         obj.Set("feed_publisher_url", data.feed_info[i].feed_publisher_url);
         obj.Set("feed_lang", data.feed_info[i].feed_lang);
-        obj.Set("default_lang", data.feed_info[i].default_lang);
-        obj.Set("feed_start_date", data.feed_info[i].feed_start_date);
-        obj.Set("feed_end_date", data.feed_info[i].feed_end_date);
-        obj.Set("feed_version", data.feed_info[i].feed_version);
-        obj.Set("feed_contact_email", data.feed_info[i].feed_contact_email);
-        obj.Set("feed_contact_url", data.feed_info[i].feed_contact_url);
+        if (data.feed_info[i].default_lang.has_value()) obj.Set("default_lang", data.feed_info[i].default_lang.value()); else obj.Set("default_lang", env.Null());
+        if (data.feed_info[i].feed_start_date.has_value()) obj.Set("feed_start_date", data.feed_info[i].feed_start_date.value()); else obj.Set("feed_start_date", env.Null());
+        if (data.feed_info[i].feed_end_date.has_value()) obj.Set("feed_end_date", data.feed_info[i].feed_end_date.value()); else obj.Set("feed_end_date", env.Null());
+        if (data.feed_info[i].feed_version.has_value()) obj.Set("feed_version", data.feed_info[i].feed_version.value()); else obj.Set("feed_version", env.Null());
+        if (data.feed_info[i].feed_contact_email.has_value()) obj.Set("feed_contact_email", data.feed_info[i].feed_contact_email.value()); else obj.Set("feed_contact_email", env.Null());
+        if (data.feed_info[i].feed_contact_url.has_value()) obj.Set("feed_contact_url", data.feed_info[i].feed_contact_url.value()); else obj.Set("feed_contact_url", env.Null());
         arr[i] = obj;
     }
     return arr;
@@ -871,13 +893,13 @@ Napi::Value GTFSAddon::GetTrip(const Napi::CallbackInfo& info) {
     obj.Set("trip_id", t.trip_id);
     obj.Set("route_id", t.route_id);
     obj.Set("service_id", t.service_id);
-    obj.Set("trip_headsign", t.trip_headsign);
-    obj.Set("trip_short_name", t.trip_short_name);
-    obj.Set("direction_id", t.direction_id);
-    obj.Set("block_id", t.block_id);
-    obj.Set("shape_id", t.shape_id);
-    obj.Set("wheelchair_accessible", t.wheelchair_accessible);
-    obj.Set("bikes_allowed", t.bikes_allowed);
+    if (t.trip_headsign.has_value()) obj.Set("trip_headsign", t.trip_headsign.value()); else obj.Set("trip_headsign", env.Null());
+    if (t.trip_short_name.has_value()) obj.Set("trip_short_name", t.trip_short_name.value()); else obj.Set("trip_short_name", env.Null());
+    if (t.direction_id.has_value()) obj.Set("direction_id", t.direction_id.value()); else obj.Set("direction_id", env.Null());
+    if (t.block_id.has_value()) obj.Set("block_id", t.block_id.value()); else obj.Set("block_id", env.Null());
+    if (t.shape_id.has_value()) obj.Set("shape_id", t.shape_id.value()); else obj.Set("shape_id", env.Null());
+    if (t.wheelchair_accessible.has_value()) obj.Set("wheelchair_accessible", t.wheelchair_accessible.value()); else obj.Set("wheelchair_accessible", env.Null());
+    if (t.bikes_allowed.has_value()) obj.Set("bikes_allowed", t.bikes_allowed.value()); else obj.Set("bikes_allowed", env.Null());
     return obj;
 }
 
@@ -890,13 +912,13 @@ Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
         obj.Set("trip_id", t.trip_id);
         obj.Set("route_id", t.route_id);
         obj.Set("service_id", t.service_id);
-        obj.Set("trip_headsign", t.trip_headsign);
-        obj.Set("trip_short_name", t.trip_short_name);
-        obj.Set("direction_id", t.direction_id);
-        obj.Set("block_id", t.block_id);
-        obj.Set("shape_id", t.shape_id);
-        obj.Set("wheelchair_accessible", t.wheelchair_accessible);
-        obj.Set("bikes_allowed", t.bikes_allowed);
+        if (t.trip_headsign.has_value()) obj.Set("trip_headsign", t.trip_headsign.value()); else obj.Set("trip_headsign", env.Null());
+        if (t.trip_short_name.has_value()) obj.Set("trip_short_name", t.trip_short_name.value()); else obj.Set("trip_short_name", env.Null());
+        if (t.direction_id.has_value()) obj.Set("direction_id", t.direction_id.value()); else obj.Set("direction_id", env.Null());
+        if (t.block_id.has_value()) obj.Set("block_id", t.block_id.value()); else obj.Set("block_id", env.Null());
+        if (t.shape_id.has_value()) obj.Set("shape_id", t.shape_id.value()); else obj.Set("shape_id", env.Null());
+        if (t.wheelchair_accessible.has_value()) obj.Set("wheelchair_accessible", t.wheelchair_accessible.value()); else obj.Set("wheelchair_accessible", env.Null());
+        if (t.bikes_allowed.has_value()) obj.Set("bikes_allowed", t.bikes_allowed.value()); else obj.Set("bikes_allowed", env.Null());
         arr[i++] = obj;
     }
     return arr;
@@ -930,7 +952,7 @@ Napi::Value GTFSAddon::GetShape(const Napi::CallbackInfo& info) {
         obj.Set("shape_pt_lat", s->shape_pt_lat);
         obj.Set("shape_pt_lon", s->shape_pt_lon);
         obj.Set("shape_pt_sequence", s->shape_pt_sequence);
-        obj.Set("shape_dist_traveled", s->shape_dist_traveled);
+        if (s->shape_dist_traveled.has_value()) obj.Set("shape_dist_traveled", s->shape_dist_traveled.value()); else obj.Set("shape_dist_traveled", env.Null());
         arr[i] = obj;
     }
     return arr;
@@ -945,7 +967,7 @@ Napi::Value GTFSAddon::GetShapes(const Napi::CallbackInfo& info) {
         obj.Set("shape_pt_lat", data.shapes[i].shape_pt_lat);
         obj.Set("shape_pt_lon", data.shapes[i].shape_pt_lon);
         obj.Set("shape_pt_sequence", data.shapes[i].shape_pt_sequence);
-        obj.Set("shape_dist_traveled", data.shapes[i].shape_dist_traveled);
+        if (data.shapes[i].shape_dist_traveled.has_value()) obj.Set("shape_dist_traveled", data.shapes[i].shape_dist_traveled.value()); else obj.Set("shape_dist_traveled", env.Null());
         arr[i] = obj;
     }
     return arr;

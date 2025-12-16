@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <shared_mutex>
 #include <mutex>
+#include <optional>
 
 namespace gtfs {
 
@@ -59,14 +60,14 @@ public:
 };
 
 struct Agency {
-    std::string agency_id;
+    std::optional<std::string> agency_id = std::nullopt;
     std::string agency_name;
     std::string agency_url;
     std::string agency_timezone;
-    std::string agency_lang;
-    std::string agency_phone;
-    std::string agency_fare_url;
-    std::string agency_email;
+    std::optional<std::string> agency_lang = std::nullopt;
+    std::optional<std::string> agency_phone = std::nullopt;
+    std::optional<std::string> agency_fare_url = std::nullopt;
+    std::optional<std::string> agency_email = std::nullopt;
 };
 
 struct Calendar {
@@ -90,61 +91,64 @@ struct CalendarDate {
 
 struct Route {
     std::string route_id;
-    std::string agency_id;
-    std::string route_short_name;
-    std::string route_long_name;
-    std::string route_desc;
+    std::optional<std::string> agency_id = std::nullopt;
+    std::optional<std::string> route_short_name = std::nullopt;
+    std::optional<std::string> route_long_name = std::nullopt;
+    std::optional<std::string> route_desc = std::nullopt;
     int route_type;
-    std::string route_url;
-    std::string route_color;
-    std::string route_text_color;
-    int continuous_pickup;
-    int continuous_drop_off;
+    std::optional<std::string> route_url = std::nullopt;
+    std::optional<std::string> route_color = std::nullopt;
+    std::optional<std::string> route_text_color = std::nullopt;
+    std::optional<int> continuous_pickup = std::nullopt;
+    std::optional<int> continuous_drop_off = std::nullopt;
+    std::optional<int> route_sort_order = std::nullopt;
+    std::optional<std::string> network_id = std::nullopt;
 };
 
 struct Stop {
     std::string stop_id;
-    std::string stop_code;
+    std::optional<std::string> stop_code = std::nullopt;
     std::string stop_name;
-    std::string stop_desc;
-    double stop_lat;
-    double stop_lon;
-    std::string zone_id;
-    std::string stop_url;
-    int location_type;
-    std::string parent_station;
-    std::string stop_timezone;
-    int wheelchair_boarding;
-    std::string level_id;
-    std::string platform_code;
+    std::optional<std::string> stop_desc = std::nullopt;
+    std::optional<double> stop_lat = std::nullopt;
+    std::optional<double> stop_lon = std::nullopt;
+    std::optional<std::string> zone_id = std::nullopt;
+    std::optional<std::string> stop_url = std::nullopt;
+    std::optional<int> location_type = std::nullopt;
+    std::optional<std::string> parent_station = std::nullopt;
+    std::optional<std::string> stop_timezone = std::nullopt;
+    std::optional<int> wheelchair_boarding = std::nullopt;
+    std::optional<std::string> level_id = std::nullopt;
+    std::optional<std::string> platform_code = std::nullopt;
+    std::optional<std::string> tts_stop_name = std::nullopt;
 };
 
 struct StopTime {
     uint32_t trip_id;       // Interned ID
-    int arrival_time;       // Seconds since midnight
-    int departure_time;     // Seconds since midnight
+    std::optional<int> arrival_time;       // Seconds since midnight
+    std::optional<int> departure_time;     // Seconds since midnight
     uint32_t stop_id;       // Interned ID
     int stop_sequence;
-    uint32_t stop_headsign; // Interned ID
+    std::optional<uint32_t> stop_headsign; // Interned ID
     int pickup_type;
     int drop_off_type;
-    double shape_dist_traveled;
-    int timepoint;
-    int continuous_pickup;
-    int continuous_drop_off;
+    std::optional<double> shape_dist_traveled = std::nullopt;
+    std::optional<int> timepoint = std::nullopt;
+    std::optional<int> continuous_pickup = std::nullopt;
+    std::optional<int> continuous_drop_off = std::nullopt;
 };
 
 struct Trip {
     std::string route_id;
     std::string service_id;
     std::string trip_id;
-    std::string trip_headsign;
-    std::string trip_short_name;
-    int direction_id;
-    std::string block_id;
-    std::string shape_id;
-    int wheelchair_accessible;
-    int bikes_allowed;
+    std::optional<std::string> trip_headsign = std::nullopt;
+    std::optional<std::string> trip_short_name = std::nullopt;
+    std::optional<int> direction_id = std::nullopt;
+    std::optional<std::string> block_id = std::nullopt;
+    std::optional<std::string> shape_id = std::nullopt;
+    std::optional<int> wheelchair_accessible = std::nullopt;
+    std::optional<int> bikes_allowed = std::nullopt;
 };
 
 struct Shape {
@@ -152,19 +156,19 @@ struct Shape {
     double shape_pt_lat;
     double shape_pt_lon;
     int shape_pt_sequence;
-    double shape_dist_traveled;
+    std::optional<double> shape_dist_traveled = std::nullopt;
 };
 
 struct FeedInfo {
     std::string feed_publisher_name;
     std::string feed_publisher_url;
     std::string feed_lang;
-    std::string default_lang;
-    std::string feed_start_date;
-    std::string feed_end_date;
-    std::string feed_version;
-    std::string feed_contact_email;
-    std::string feed_contact_url;
+    std::optional<std::string> default_lang = std::nullopt;
+    std::optional<std::string> feed_start_date = std::nullopt;
+    std::optional<std::string> feed_end_date = std::nullopt;
+    std::optional<std::string> feed_version = std::nullopt;
+    std::optional<std::string> feed_contact_email = std::nullopt;
+    std::optional<std::string> feed_contact_url = std::nullopt;
 };
 
 // Realtime Structures

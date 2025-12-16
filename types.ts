@@ -75,6 +75,7 @@ export enum TripScheduleRelationship {
     ADDED = 1,
     UNSCHEDULED = 2,
     CANCELED = 3,
+    DUPLICATED = 4,
     REPLACEMENT = 5
 }
 
@@ -147,85 +148,88 @@ export enum AlertSeverityLevel {
 
 
 export interface Agency {
-  agency_id: string;
-  agency_name: string;
-  agency_url: string;
-  agency_timezone: string;
-  agency_lang: string;
-  agency_phone: string;
-  agency_fare_url: string;
-  agency_email: string;
+    agency_id: string | null;
+    agency_name: string;
+    agency_url: string;
+    agency_timezone: string;
+    agency_lang: string | null;
+    agency_phone: string | null;
+    agency_fare_url: string | null;
+    agency_email: string | null;
 }
 
 export interface Route {
-  route_id: string;
-  agency_id: string;
-  route_short_name: string;
-  route_long_name: string;
-  route_desc: string;
-  route_type: RouteType;
-  route_url: string;
-  route_color: string;
-  route_text_color: string;
-  continuous_pickup: ContinuousPickup;
-  continuous_drop_off: ContinuousDropOff;
+    route_id: string;
+    agency_id: string | null;
+    route_short_name: string | null;
+    route_long_name: string | null;
+    route_desc: string | null;
+    route_type: RouteType;
+    route_url: string | null;
+    route_color: string | null;
+    route_text_color: string | null;
+    continuous_pickup: ContinuousPickup | null;
+    continuous_drop_off: ContinuousDropOff | null;
+    route_sort_order: number | null;
+    network_id: string | null;
 }
 
 export interface Stop {
-  stop_id: string;
-  stop_code: string;
-  stop_name: string;
-  stop_desc: string;
-  stop_lat: number;
-  stop_lon: number;
-  zone_id: string;
-  stop_url: string;
-  location_type: LocationType;
-  parent_station: string;
-  stop_timezone: string;
-  wheelchair_boarding: WheelchairBoarding;
-  level_id: string;
-  platform_code: string;
+    stop_id: string;
+    stop_code: string | null;
+    stop_name: string;
+    stop_desc: string | null;
+    stop_lat: number | null;
+    stop_lon: number | null;
+    zone_id: string | null;
+    stop_url: string | null;
+    location_type: LocationType | null;
+    parent_station: string | null;
+    stop_timezone: string | null;
+    wheelchair_boarding: WheelchairBoarding | null;
+    level_id: string | null;
+    platform_code: string | null;
+    tts_stop_name?: string | null;
 }
 
 export interface StopTime {
     trip_id: string;
     stop_id: string;
-    arrival_time: number; // Seconds since midnight
-    departure_time: number; // Seconds since midnight
+    arrival_time: number | null; // Seconds since midnight (null when missing)
+    departure_time: number | null; // Seconds since midnight (null when missing)
     stop_sequence: number;
-    stop_headsign: string;
+    stop_headsign: string | null;
     pickup_type: PickupType;
     drop_off_type: DropOffType;
-    shape_dist_traveled: number;
-    timepoint: number;
-    continuous_pickup: ContinuousPickup;
-    continuous_drop_off: ContinuousDropOff;
+    shape_dist_traveled: number | null;
+    timepoint: number | null;
+    continuous_pickup: ContinuousPickup | null;
+    continuous_drop_off: ContinuousDropOff | null;
 }
 
 export interface FeedInfo {
     feed_publisher_name: string;
     feed_publisher_url: string;
     feed_lang: string;
-    default_lang: string;
-    feed_start_date: string;
-    feed_end_date: string;
-    feed_version: string;
-    feed_contact_email: string;
-    feed_contact_url: string;
+    default_lang: string | null;
+    feed_start_date: string | null;
+    feed_end_date: string | null;
+    feed_version: string | null;
+    feed_contact_email: string | null;
+    feed_contact_url: string | null;
 }
 
 export interface Trip {
     trip_id: string;
     route_id: string;
     service_id: string;
-    trip_headsign: string;
-    trip_short_name: string;
-    direction_id: number;
-    block_id: string;
-    shape_id: string;
-    wheelchair_accessible: WheelchairAccessible;
-    bikes_allowed: BikesAllowed;
+    trip_headsign: string | null;
+    trip_short_name: string | null;
+    direction_id: number | null;
+    block_id: string | null;
+    shape_id: string | null;
+    wheelchair_accessible: WheelchairAccessible | null;
+    bikes_allowed: BikesAllowed | null;
 }
 
 export interface Shape {
@@ -233,7 +237,7 @@ export interface Shape {
     shape_pt_lat: number;
     shape_pt_lon: number;
     shape_pt_sequence: number;
-    shape_dist_traveled: number;
+    shape_dist_traveled: number | null;
 }
 
 export interface Calendar {
