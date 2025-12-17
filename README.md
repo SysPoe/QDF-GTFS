@@ -54,7 +54,11 @@ You can load a GTFS feed from a URL or a local file path.
 
 ```typescript
 // Load from URL
+// (simple string form)
 await gtfs.loadFromUrl("https://example.com/gtfs.zip");
+
+// (object form with headers)
+await gtfs.loadFromUrl({ url: "https://example.com/gtfs.zip", headers: { Authorization: "Bearer ..." } });
 
 // OR Load from local path
 // await gtfs.loadFromPath("./path/to/gtfs.zip");
@@ -71,10 +75,18 @@ console.log(`Loaded ${routes.length} routes and ${stops.length} stops.`);
 Fetch and parse realtime updates (Protocol Buffers).
 
 ```typescript
+// Using simple string form
 await gtfs.updateRealtimeFromUrl(
   "https://example.com/alerts.pb",
   "https://example.com/trip_updates.pb",
   "https://example.com/vehicle_positions.pb"
+);
+
+// Or passing objects (with headers)
+await gtfs.updateRealtimeFromUrl(
+  { url: "https://example.com/alerts.pb", headers: { Authorization: "Bearer ..." } },
+  { url: "https://example.com/trip_updates.pb" },
+  { url: "https://example.com/vehicle_positions.pb" }
 );
 
 // Access parsed realtime data
