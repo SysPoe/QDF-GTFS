@@ -146,6 +146,16 @@ export enum AlertSeverityLevel {
     SEVERE = 4
 }
 
+export enum GTFSMergeStrategy {
+    OVERWRITE = 0, // Overwrite existing IDs
+    IGNORE = 1,    // Ignore if ID exists
+    THROW = 2      // Throw error if ID exists
+}
+
+export interface GTFSFeedConfig {
+    url: string;
+    headers?: Record<string, string>;
+}
 
 export interface Agency {
     agency_id: string | null;
@@ -356,6 +366,7 @@ export interface GTFSOptions {
     ansi?: boolean;
     cacheDir?: string;
     cache?: boolean;
+    mergeStrategy?: GTFSMergeStrategy;
 }
 
 // Helper fns

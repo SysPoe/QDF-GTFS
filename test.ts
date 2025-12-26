@@ -7,8 +7,8 @@ async function main() {
 	console.log( "Loading..." );
 	let startTime = Date.now();
 
-	if ( fs.existsSync( "cache/SEQ_GTFS.zip" ) ) await g.loadFromPath( "cache/SEQ_GTFS.zip" );
-	else await g.loadFromUrl( "https://gtfsrt.api.translink.com.au/GTFS/SEQ_GTFS.zip" );
+	if ( fs.existsSync( "cache/SEQ_GTFS.zip" ) ) await g.loadFromPath( ["cache/SEQ_GTFS.zip"] );
+	else await g.loadStatic( ["https://gtfsrt.api.translink.com.au/GTFS/SEQ_GTFS.zip"] );
 
 	getAppMemoryUsage();
 
@@ -20,7 +20,7 @@ async function main() {
 	console.log( "Found", g.getShapes().length, "shapes" );
 	console.log( "Found", g.getStops().length, "stops" );
 	console.log( "Found", g.getTrips().length, "trips" );
-	console.log( "Found", g.getTrips().flatMap( v => g.getStopTimesForTrip( v.trip_id ) ).length, "stopTimes" );
+	console.log( "Found", g.getStopTimes().length, "stopTimes" );
 }
 
 function getAppMemoryUsage() {
