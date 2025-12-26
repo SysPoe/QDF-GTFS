@@ -656,7 +656,7 @@ size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<
         if (merge_strategy == 1 && merged_shapes.count(id)) continue;
         if (merge_strategy == 2 && merged_shapes.count(id)) throw std::runtime_error("Duplicate shape: " + id);
 
-        // Sorting shapes by sequence just in case
+        // Ensure shape points are ordered by sequence
         std::sort(vec.begin(), vec.end(), [](const Shape& a, const Shape& b){
             return a.shape_pt_sequence < b.shape_pt_sequence;
         });
@@ -669,9 +669,7 @@ size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<
 }
 
 size_t parse_feed_info(GTFSData& data, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
-    // Feed info is a vector, just append? Or single entry?
-    // GTFS spec says one record. But if we load multiple feeds, we might have multiple feed_infos.
-    // We'll append.
+    // Append feed information records to the data store
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
