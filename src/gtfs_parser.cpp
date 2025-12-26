@@ -669,6 +669,8 @@ size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<
 }
 
 size_t parse_feed_info(GTFSData& data, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
+    // Note: merge_strategy is intentionally ignored for feed_info; records are always appended.
+    (void)merge_strategy;
     // Append feed information records to the data store
     std::stringstream ss(content);
     std::string line;
