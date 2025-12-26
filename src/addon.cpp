@@ -254,7 +254,7 @@ Napi::Value GTFSAddon::GetAgencies(const Napi::CallbackInfo& info) {
         }
     } else {
         for (const auto& [id, a] : data.agencies) {
-             matches.push_back(&a);
+            matches.push_back(&a);
         }
     }
 
