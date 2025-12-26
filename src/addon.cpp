@@ -291,17 +291,17 @@ Napi::Value GTFSAddon::GetRoutes(const Napi::CallbackInfo& info) {
     if (has_filter && filter.Has("route_id")) {
         std::string id = filter.Get("route_id").As<Napi::String>().Utf8Value();
         if (data.routes.count(id)) {
-             const auto& r = data.routes.at(id);
-             bool ok = true;
-             if (filter.Has("agency_id")) {
+            const auto& r = data.routes.at(id);
+            bool ok = true;
+            if (filter.Has("agency_id")) {
                 std::string v = filter.Get("agency_id").As<Napi::String>().Utf8Value();
                 if (!r.agency_id.has_value() || r.agency_id.value() != v) ok = false;
-             }
-             if (filter.Has("route_type")) {
+            }
+            if (filter.Has("route_type")) {
                 int v = filter.Get("route_type").As<Napi::Number>().Int32Value();
                 if (r.route_type != v) ok = false;
-             }
-             if (ok) matches.push_back(&r);
+            }
+            if (ok) matches.push_back(&r);
         }
     } else {
         for (const auto& [id, r] : data.routes) {
