@@ -9,6 +9,7 @@
 #include <future>
 #include <vector>
 #include <atomic>
+#include <unordered_set>
 
 namespace gtfs {
 
@@ -144,7 +145,7 @@ bool get_bool(const std::vector<std::string>& row, int index, bool default_val =
 }
 
 
-size_t parse_agency(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
+size_t parse_agency(GTFSData& data, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
@@ -195,6 +196,10 @@ size_t parse_agency(GTFSData& data, const std::string& content, const std::funct
         // Use agency_id if present, otherwise fall back to agency_name as key
         std::string key = a.agency_id.has_value() ? a.agency_id.value() : a.agency_name;
         if (!a.agency_id.has_value()) a.agency_id = key; // ensure a usable id exists
+
+        if (merge_strategy == 1 && data.agencies.count(key)) continue; // IGNORE
+        if (merge_strategy == 2 && data.agencies.count(key)) throw std::runtime_error("Duplicate agency: " + key); // THROW
+
         data.agencies[key] = a;
         count++;
         report_progress(bytes_read);
@@ -203,7 +208,7 @@ size_t parse_agency(GTFSData& data, const std::string& content, const std::funct
     return count;
 }
 
-size_t parse_routes(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
+size_t parse_routes(GTFSData& data, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
@@ -267,6 +272,10 @@ size_t parse_routes(GTFSData& data, const std::string& content, const std::funct
         if (!tmp.empty()) r.route_sort_order = get_int(row, sort_order_idx);
         tmp = get_val(row, network_id_idx);
         if (!tmp.empty()) r.network_id = tmp;
+
+        if (merge_strategy == 1 && data.routes.count(r.route_id)) continue; // IGNORE
+        if (merge_strategy == 2 && data.routes.count(r.route_id)) throw std::runtime_error("Duplicate route: " + r.route_id); // THROW
+
         data.routes[r.route_id] = r;
         count++;
         report_progress(bytes_read);
@@ -275,7 +284,7 @@ size_t parse_routes(GTFSData& data, const std::string& content, const std::funct
     return count;
 }
 
-size_t parse_trips(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
+size_t parse_trips(GTFSData& data, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
@@ -329,6 +338,10 @@ size_t parse_trips(GTFSData& data, const std::string& content, const std::functi
         if (!tmp.empty()) t.wheelchair_accessible = get_int(row, wheelchair_idx);
         tmp = get_val(row, bikes_idx);
         if (!tmp.empty()) t.bikes_allowed = get_int(row, bikes_idx);
+
+        if (merge_strategy == 1 && data.trips.count(t.trip_id)) continue; // IGNORE
+        if (merge_strategy == 2 && data.trips.count(t.trip_id)) throw std::runtime_error("Duplicate trip: " + t.trip_id); // THROW
+
         data.trips[t.trip_id] = t;
         count++;
         report_progress(bytes_read);
@@ -337,7 +350,7 @@ size_t parse_trips(GTFSData& data, const std::string& content, const std::functi
     return count;
 }
 
-size_t parse_stops(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
+size_t parse_stops(GTFSData& data, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
@@ -404,6 +417,10 @@ size_t parse_stops(GTFSData& data, const std::string& content, const std::functi
         if (!tmp.empty()) s.level_id = tmp;
         tmp = get_val(row, platform_idx);
         if (!tmp.empty()) s.platform_code = tmp;
+
+        if (merge_strategy == 1 && data.stops.count(s.stop_id)) continue; // IGNORE
+        if (merge_strategy == 2 && data.stops.count(s.stop_id)) throw std::runtime_error("Duplicate stop: " + s.stop_id); // THROW
+
         data.stops[s.stop_id] = s;
         count++;
         report_progress(bytes_read);
@@ -484,7 +501,7 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
     return count;
 }
 
-size_t parse_calendar(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
+size_t parse_calendar(GTFSData& data, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
@@ -530,6 +547,10 @@ size_t parse_calendar(GTFSData& data, const std::string& content, const std::fun
         c.sunday = get_bool(row, sun_idx);
         c.start_date = get_val(row, start_idx);
         c.end_date = get_val(row, end_idx);
+
+        if (merge_strategy == 1 && data.calendars.count(c.service_id)) continue; // IGNORE
+        if (merge_strategy == 2 && data.calendars.count(c.service_id)) throw std::runtime_error("Duplicate calendar: " + c.service_id); // THROW
+
         data.calendars[c.service_id] = c;
         count++;
         report_progress(bytes_read);
@@ -538,7 +559,7 @@ size_t parse_calendar(GTFSData& data, const std::string& content, const std::fun
     return count;
 }
 
-size_t parse_calendar_dates(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
+size_t parse_calendar_dates(GTFSData& data, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
@@ -569,6 +590,13 @@ size_t parse_calendar_dates(GTFSData& data, const std::string& content, const st
         std::string service_id = get_val(row, service_id_idx);
         std::string date = get_val(row, date_idx);
         int exc = get_int(row, exc_idx);
+
+        // Calendar dates are (service_id, date) key
+        if (merge_strategy == 1 && data.calendar_dates.count(service_id) && data.calendar_dates[service_id].count(date)) continue;
+        if (merge_strategy == 2 && data.calendar_dates.count(service_id) && data.calendar_dates[service_id].count(date)) {
+            throw std::runtime_error("Duplicate calendar_date: " + service_id + "/" + date);
+        }
+
         data.calendar_dates[service_id][date] = exc;
         count++;
         report_progress(bytes_read);
@@ -577,7 +605,7 @@ size_t parse_calendar_dates(GTFSData& data, const std::string& content, const st
     return count;
 }
 
-size_t parse_shapes(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
+size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<Shape>>& merged_shapes, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
@@ -602,6 +630,9 @@ size_t parse_shapes(GTFSData& data, const std::string& content, const std::funct
     int seq_idx = get_col_index(headers, "shape_pt_sequence");
     int dist_idx = get_col_index(headers, "shape_dist_traveled");
 
+    // We need to group shapes by ID within this feed first
+    std::unordered_map<std::string, std::vector<Shape>> feed_shapes;
+
     size_t count = 0;
     while (std::getline(ss, line)) {
         bytes_read += line.size() + 1;
@@ -614,15 +645,33 @@ size_t parse_shapes(GTFSData& data, const std::string& content, const std::funct
         s.shape_pt_sequence = get_int(row, seq_idx);
         std::string tmp = get_val(row, dist_idx);
         if (!tmp.empty()) s.shape_dist_traveled = get_double(row, dist_idx);
-        data.shapes.push_back(s);
+
+        feed_shapes[s.shape_id].push_back(s);
         count++;
         report_progress(bytes_read);
     }
+
+    // Merge into global map
+    for (auto& [id, vec] : feed_shapes) {
+        if (merge_strategy == 1 && merged_shapes.count(id)) continue;
+        if (merge_strategy == 2 && merged_shapes.count(id)) throw std::runtime_error("Duplicate shape: " + id);
+
+        // Ensure shape points are ordered by sequence
+        std::sort(vec.begin(), vec.end(), [](const Shape& a, const Shape& b){
+            return a.shape_pt_sequence < b.shape_pt_sequence;
+        });
+
+        merged_shapes[id] = std::move(vec);
+    }
+
     if (on_progress && bytes_read > last_report) on_progress(bytes_read);
     return count;
 }
 
-size_t parse_feed_info(GTFSData& data, const std::string& content, const std::function<void(size_t)>& on_progress = nullptr) {
+size_t parse_feed_info(GTFSData& data, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
+    // Note: merge_strategy is intentionally ignored for feed_info; records are always appended.
+    (void)merge_strategy;
+    // Append feed information records to the data store
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
@@ -673,6 +722,8 @@ size_t parse_feed_info(GTFSData& data, const std::string& content, const std::fu
         if (!tmp.empty()) f.feed_contact_email = tmp;
         tmp = get_val(row, contact_url_idx);
         if (!tmp.empty()) f.feed_contact_url = tmp;
+
+        // Just append feed info
         data.feed_info.push_back(f);
         count++;
         report_progress(bytes_read);
@@ -681,210 +732,259 @@ size_t parse_feed_info(GTFSData& data, const std::string& content, const std::fu
     return count;
 }
 
-void load_from_zip(GTFSData& data, const unsigned char* zip_data, size_t zip_size, LogFn log = nullptr, ProgressFn progress = nullptr) {
+void load_feeds(GTFSData& data, const std::vector<std::vector<unsigned char>>& zip_buffers, int merge_strategy, LogFn log, ProgressFn progress) {
     data.clear();
 
-    mz_zip_archive zip_archive;
-    memset(&zip_archive, 0, sizeof(zip_archive));
+    std::unordered_map<uint32_t, std::vector<StopTime>> merged_stop_times;
+    std::unordered_map<std::string, std::vector<Shape>> merged_shapes;
 
-    if (!mz_zip_reader_init_mem(&zip_archive, zip_data, zip_size, 0)) {
-        if (log) log("Failed to init zip reader");
-        std::cerr << "Failed to init zip reader" << std::endl;
-        return;
-    }
+    int feed_idx = 0;
+    for (const auto& zip_data : zip_buffers) {
+        feed_idx++;
+        if (log) log("Processing feed " + std::to_string(feed_idx) + "...");
 
-    // First pass: Calculate total uncompressed size of relevant files and extract them
-    int64_t total_uncompressed_size = 0;
-    int file_count = mz_zip_reader_get_num_files(&zip_archive);
+        mz_zip_archive zip_archive;
+        memset(&zip_archive, 0, sizeof(zip_archive));
 
-    std::vector<std::string> target_files = {
-        "agency.txt", "routes.txt", "trips.txt", "stops.txt", "stop_times.txt",
-        "calendar.txt", "calendar_dates.txt", "shapes.txt", "feed_info.txt"
-    };
-
-    std::unordered_map<std::string, std::string> file_contents;
-
-    for (int i = 0; i < file_count; i++) {
-        mz_zip_archive_file_stat file_stat;
-        if (!mz_zip_reader_file_stat(&zip_archive, i, &file_stat)) continue;
-
-        std::string filename = file_stat.m_filename;
-        bool is_target = false;
-        for(const auto& tf : target_files) {
-             if (tf == filename) {
-                 is_target = true;
-                 break;
-             }
+        if (!mz_zip_reader_init_mem(&zip_archive, zip_data.data(), zip_data.size(), 0)) {
+            if (log) log("Failed to init zip reader for feed " + std::to_string(feed_idx));
+            std::cerr << "Failed to init zip reader" << std::endl;
+            continue;
         }
-        if (!is_target) continue;
 
-        size_t uncomp_size = file_stat.m_uncomp_size;
-        void* p = mz_zip_reader_extract_file_to_heap(&zip_archive, filename.c_str(), &uncomp_size, 0);
-        if (p) {
-            file_contents[filename] = std::string((char*)p, uncomp_size);
-            mz_free(p);
-            total_uncompressed_size += uncomp_size;
-        }
-    }
-    mz_zip_reader_end(&zip_archive);
+        // Calculate total uncompressed size for progress
+        int64_t total_uncompressed_size = 0;
+        int file_count = mz_zip_reader_get_num_files(&zip_archive);
 
-    if (log) log("Files extracted to memory. Starting parallel parsing...");
-
-    // Launch parallel tasks
-    std::vector<std::future<size_t>> futures;
-    std::atomic<int64_t> processed_bytes(0);
-
-    auto process_file = [&](auto parser_func, const std::string& filename) -> size_t {
-        if (file_contents.find(filename) == file_contents.end()) return 0;
-        const std::string& content = file_contents[filename];
-        auto inline_progress = [&](size_t file_bytes_done) {
-            if (!progress) return;
-            int64_t current = processed_bytes.load(std::memory_order_relaxed) + static_cast<int64_t>(file_bytes_done);
-            if (current > total_uncompressed_size) current = total_uncompressed_size;
-            progress("Loading GTFS Data", current, total_uncompressed_size);
+        std::vector<std::string> target_files = {
+            "agency.txt", "routes.txt", "trips.txt", "stops.txt", "stop_times.txt",
+            "calendar.txt", "calendar_dates.txt", "shapes.txt", "feed_info.txt"
         };
 
-        size_t count = parser_func(data, content, inline_progress);
+        std::unordered_map<std::string, std::string> file_contents;
 
-        int64_t current = processed_bytes.fetch_add(content.size()) + content.size();
-        if (progress) progress("Loading GTFS Data", current, total_uncompressed_size);
-        if (log) log("Loaded " + std::to_string(count) + " entries from " + filename);
-        return count;
-    };
+        for (int i = 0; i < file_count; i++) {
+            mz_zip_archive_file_stat file_stat;
+            if (!mz_zip_reader_file_stat(&zip_archive, i, &file_stat)) continue;
 
-    if (file_contents.count("agency.txt")) {
-        futures.push_back(std::async(std::launch::async, process_file, parse_agency, "agency.txt"));
-    }
-    if (file_contents.count("routes.txt")) {
-        futures.push_back(std::async(std::launch::async, process_file, parse_routes, "routes.txt"));
-    }
-    if (file_contents.count("trips.txt")) {
-        futures.push_back(std::async(std::launch::async, process_file, parse_trips, "trips.txt"));
-    }
-    if (file_contents.count("stops.txt")) {
-        futures.push_back(std::async(std::launch::async, process_file, parse_stops, "stops.txt"));
-    }
-    if (file_contents.count("calendar.txt")) {
-        futures.push_back(std::async(std::launch::async, process_file, parse_calendar, "calendar.txt"));
-    }
-    if (file_contents.count("calendar_dates.txt")) {
-        futures.push_back(std::async(std::launch::async, process_file, parse_calendar_dates, "calendar_dates.txt"));
-    }
-    if (file_contents.count("shapes.txt")) {
-        futures.push_back(std::async(std::launch::async, process_file, parse_shapes, "shapes.txt"));
-    }
-    if (file_contents.count("feed_info.txt")) {
-        futures.push_back(std::async(std::launch::async, process_file, parse_feed_info, "feed_info.txt"));
-    }
+            std::string filename = file_stat.m_filename;
+            bool is_target = false;
+            for(const auto& tf : target_files) {
+                 if (tf == filename) {
+                     is_target = true;
+                     break;
+                 }
+            }
+            if (!is_target) continue;
 
-    // Special handling for stop_times.txt (parallel chunk parsing)
-    std::future<size_t> stop_times_future;
-    if (file_contents.count("stop_times.txt")) {
-        stop_times_future = std::async(std::launch::async, [&data, &file_contents, progress, log, total_uncompressed_size, &processed_bytes]() -> size_t {
-            const std::string& content = file_contents["stop_times.txt"];
-            if (content.empty()) return 0;
+            size_t uncomp_size = file_stat.m_uncomp_size;
+            void* p = mz_zip_reader_extract_file_to_heap(&zip_archive, filename.c_str(), &uncomp_size, 0);
+            if (p) {
+                file_contents[filename] = std::string((char*)p, uncomp_size);
+                mz_free(p);
+                total_uncompressed_size += uncomp_size;
+            }
+        }
+        mz_zip_reader_end(&zip_archive);
 
-            // Read header
-            size_t header_end = content.find('\n');
-            if (header_end == std::string::npos) return 0;
-            std::string header_line = content.substr(0, header_end);
-            remove_bom(header_line);
-            auto headers = parse_csv_line(header_line);
+        if (log) log("Files extracted to memory. Starting parallel parsing for feed " + std::to_string(feed_idx));
 
-            size_t start_pos = header_end + 1;
-            size_t total_length = content.length();
-            if (start_pos >= total_length) return 0;
+        std::vector<std::future<size_t>> futures;
+        std::atomic<int64_t> processed_bytes(0);
 
-            // Count header bytes toward progress
-            processed_bytes.fetch_add(header_end + 1);
-            if (progress) progress("Loading GTFS Data", processed_bytes.load(std::memory_order_relaxed), total_uncompressed_size);
+        auto process_file = [&](auto parser_func, const std::string& filename) -> size_t {
+            if (file_contents.find(filename) == file_contents.end()) return 0;
+            const std::string& content = file_contents[filename];
+            auto inline_progress = [&](size_t file_bytes_done) {
+                if (!progress) return;
+                int64_t current = processed_bytes.load(std::memory_order_relaxed) + static_cast<int64_t>(file_bytes_done);
+                if (current > total_uncompressed_size) current = total_uncompressed_size;
+                progress("Loading GTFS Data (Feed " + std::to_string(feed_idx) + ")", current, total_uncompressed_size);
+            };
 
-            unsigned int thread_count = std::thread::hardware_concurrency();
-            if (thread_count == 0) thread_count = 4;
+            size_t count = parser_func(data, content, merge_strategy, inline_progress);
 
-            size_t data_size = total_length - start_pos;
-            size_t chunk_size = data_size / thread_count;
+            int64_t current = processed_bytes.fetch_add(content.size()) + content.size();
+            if (progress) progress("Loading GTFS Data (Feed " + std::to_string(feed_idx) + ")", current, total_uncompressed_size);
+            if (log) log("Loaded " + std::to_string(count) + " entries from " + filename);
+            return count;
+        };
 
-            std::vector<std::future<std::vector<StopTime>>> chunk_futures;
-            size_t current_pos = start_pos;
+        auto process_shapes_file = [&](const std::string& filename) -> size_t {
+            if (file_contents.find(filename) == file_contents.end()) return 0;
+            const std::string& content = file_contents[filename];
+             auto inline_progress = [&](size_t file_bytes_done) {
+                if (!progress) return;
+                int64_t current = processed_bytes.load(std::memory_order_relaxed) + static_cast<int64_t>(file_bytes_done);
+                if (current > total_uncompressed_size) current = total_uncompressed_size;
+                progress("Loading GTFS Data (Feed " + std::to_string(feed_idx) + ")", current, total_uncompressed_size);
+            };
+            size_t count = parse_shapes(data, merged_shapes, content, merge_strategy, inline_progress);
+             int64_t current = processed_bytes.fetch_add(content.size()) + content.size();
+            if (progress) progress("Loading GTFS Data (Feed " + std::to_string(feed_idx) + ")", current, total_uncompressed_size);
+            if (log) log("Loaded " + std::to_string(count) + " entries from " + filename);
+            return count;
+        };
 
-            for (unsigned int i = 0; i < thread_count; ++i) {
-                size_t end_pos = current_pos + chunk_size;
-                if (i == thread_count - 1) {
-                    end_pos = total_length;
-                } else {
-                    size_t next_newline = content.find('\n', end_pos);
-                    if (next_newline != std::string::npos) {
-                        end_pos = next_newline + 1;
-                    } else {
+        if (file_contents.count("agency.txt")) {
+            futures.push_back(std::async(std::launch::async, process_file, parse_agency, "agency.txt"));
+        }
+        if (file_contents.count("routes.txt")) {
+            futures.push_back(std::async(std::launch::async, process_file, parse_routes, "routes.txt"));
+        }
+        if (file_contents.count("trips.txt")) {
+            futures.push_back(std::async(std::launch::async, process_file, parse_trips, "trips.txt"));
+        }
+        if (file_contents.count("stops.txt")) {
+            futures.push_back(std::async(std::launch::async, process_file, parse_stops, "stops.txt"));
+        }
+        if (file_contents.count("calendar.txt")) {
+            futures.push_back(std::async(std::launch::async, process_file, parse_calendar, "calendar.txt"));
+        }
+        if (file_contents.count("calendar_dates.txt")) {
+            futures.push_back(std::async(std::launch::async, process_file, parse_calendar_dates, "calendar_dates.txt"));
+        }
+        if (file_contents.count("shapes.txt")) {
+             futures.push_back(std::async(std::launch::async, process_shapes_file, "shapes.txt"));
+        }
+        if (file_contents.count("feed_info.txt")) {
+            futures.push_back(std::async(std::launch::async, process_file, parse_feed_info, "feed_info.txt"));
+        }
+
+        std::future<size_t> stop_times_future;
+        if (file_contents.count("stop_times.txt")) {
+            stop_times_future = std::async(std::launch::async,
+                [&data, &file_contents, progress, log, total_uncompressed_size, &processed_bytes, &merged_stop_times, merge_strategy, feed_idx]() -> size_t {
+                const std::string& content = file_contents["stop_times.txt"];
+                if (content.empty()) return 0;
+
+                size_t header_end = content.find('\n');
+                if (header_end == std::string::npos) return 0;
+                std::string header_line = content.substr(0, header_end);
+                remove_bom(header_line);
+                auto headers = parse_csv_line(header_line);
+
+                size_t start_pos = header_end + 1;
+                size_t total_length = content.length();
+                if (start_pos >= total_length) return 0;
+
+                processed_bytes.fetch_add(header_end + 1);
+
+                unsigned int thread_count = std::thread::hardware_concurrency();
+                if (thread_count == 0) thread_count = 4;
+
+                size_t data_size = total_length - start_pos;
+                size_t chunk_size = data_size / thread_count;
+
+                std::vector<std::future<std::vector<StopTime>>> chunk_futures;
+                size_t current_pos = start_pos;
+
+                for (unsigned int i = 0; i < thread_count; ++i) {
+                    size_t end_pos = current_pos + chunk_size;
+                    if (i == thread_count - 1) {
                         end_pos = total_length;
+                    } else {
+                        size_t next_newline = content.find('\n', end_pos);
+                        if (next_newline != std::string::npos) {
+                            end_pos = next_newline + 1;
+                        } else {
+                            end_pos = total_length;
+                        }
+                    }
+
+                    if (current_pos >= total_length) break;
+
+                    size_t len = end_pos - current_pos;
+                    const char* ptr = content.data() + current_pos;
+
+                    chunk_futures.push_back(std::async(std::launch::async,
+                        [ptr, len, headers, &data, &processed_bytes, progress, total_uncompressed_size, feed_idx]() {
+                            std::vector<StopTime> vec;
+                            vec.reserve(len / 50);
+
+                            auto chunk_progress = [&](size_t delta_bytes) {
+                                int64_t current = processed_bytes.fetch_add(static_cast<int64_t>(delta_bytes)) + static_cast<int64_t>(delta_bytes);
+                                if (progress) {
+                                    if (current > total_uncompressed_size) current = total_uncompressed_size;
+                                    progress("Loading GTFS Data (Feed " + std::to_string(feed_idx) + ")", current, total_uncompressed_size);
+                                }
+                            };
+
+                            parse_stop_times_chunk(data.string_pool, ptr, len, headers, vec, chunk_progress);
+                            return vec;
+                        }
+                    ));
+                    current_pos = end_pos;
+                }
+
+                // Collect results
+                std::unordered_map<uint32_t, std::vector<StopTime>> current_feed_stop_times;
+                size_t total_count = 0;
+
+                for (auto& f : chunk_futures) {
+                    auto chunk_vec = f.get();
+                    total_count += chunk_vec.size();
+                    for(auto& st : chunk_vec) {
+                        current_feed_stop_times[st.trip_id].push_back(std::move(st));
                     }
                 }
 
-                if (current_pos >= total_length) break;
-
-                size_t len = end_pos - current_pos;
-                const char* ptr = content.data() + current_pos;
-
-                chunk_futures.push_back(std::async(std::launch::async,
-                    [ptr, len, headers, &data, &processed_bytes, progress, total_uncompressed_size]() {
-                        std::vector<StopTime> vec;
-                        // Pre-allocate some memory (Rough estimate: 50 bytes per line)
-                        vec.reserve(len / 50);
-
-                        auto chunk_progress = [&](size_t delta_bytes) {
-                            int64_t current = processed_bytes.fetch_add(static_cast<int64_t>(delta_bytes)) + static_cast<int64_t>(delta_bytes);
-                            if (progress) {
-                                if (current > total_uncompressed_size) current = total_uncompressed_size;
-                                progress("Loading GTFS Data", current, total_uncompressed_size);
-                            }
-                        };
-
-                        parse_stop_times_chunk(data.string_pool, ptr, len, headers, vec, chunk_progress);
-
-                        return vec;
-                    }
-                ));
-                current_pos = end_pos;
-            }
-
-            size_t total_count = 0;
-            for (auto& f : chunk_futures) {
-                auto chunk_vec = f.get();
-
-                // Merge chunks into the main vector.
-                // This is safe because only this task modifies data.stop_times.
-                if (data.stop_times.empty()) {
-                    data.stop_times = std::move(chunk_vec);
-                } else {
-                    data.stop_times.insert(data.stop_times.end(), chunk_vec.begin(), chunk_vec.end());
+                // Merge
+                // The current feed's stop times are grouped by trip_id.
+                // We check against the globally merged stop times.
+                for(auto& [tid, vec] : current_feed_stop_times) {
+                     if (merge_strategy == 1 && merged_stop_times.count(tid)) continue;
+                     if (merge_strategy == 2 && merged_stop_times.count(tid)) {
+                        // Throwing from async thread
+                        throw std::runtime_error("Duplicate trip_id in stop_times: " + data.string_pool.get(tid));
+                     }
+                     // OVERWRITE or NEW
+                     // Sort by sequence to be safe
+                     std::sort(vec.begin(), vec.end(), [](const StopTime& a, const StopTime& b){
+                        return a.stop_sequence < b.stop_sequence;
+                     });
+                     merged_stop_times[tid] = std::move(vec);
                 }
-                total_count += chunk_vec.size();
-            }
-            if (log) log("Loaded " + std::to_string(total_count) + " entries from stop_times.txt");
-            return total_count;
-        });
+
+                if (log) log("Loaded " + std::to_string(total_count) + " entries from stop_times.txt");
+                return total_count;
+            });
+        }
+
+        for (auto& f : futures) {
+            f.get();
+        }
+        if (stop_times_future.valid()) {
+            stop_times_future.get();
+        }
+    } // End zip loop
+
+    if (log) log("All feeds loaded. Finalizing data...");
+
+    // Flatten shapes
+    for(auto& [id, vec] : merged_shapes) {
+        data.shapes.insert(data.shapes.end(), vec.begin(), vec.end());
     }
 
-    // Wait for all futures
-    size_t total_parsed = 0;
-    for (auto& f : futures) {
-        total_parsed += f.get();
+    // Flatten stop_times
+    size_t total_st = 0;
+    for(const auto& [tid, vec] : merged_stop_times) {
+        total_st += vec.size();
     }
-    if (stop_times_future.valid()) {
-        total_parsed += stop_times_future.get();
+    data.stop_times.reserve(total_st);
+
+    for(auto& [tid, vec] : merged_stop_times) {
+        data.stop_times.insert(data.stop_times.end(), vec.begin(), vec.end());
     }
 
-    if (log) log("Parsing complete. Sorting stop times...");
-
+    if (log) log("Sorting stop times...");
     std::sort(data.stop_times.begin(), data.stop_times.end(),
         [](const StopTime& a, const StopTime& b) {
             if (a.trip_id != b.trip_id) {
                 return a.trip_id < b.trip_id;
             }
             return a.stop_sequence < b.stop_sequence;
-        }
-    );
+        });
 
     if (log) log("Indexing stop times by stop_id...");
     for (size_t i = 0; i < data.stop_times.size(); ++i) {

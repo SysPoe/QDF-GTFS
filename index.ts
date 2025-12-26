@@ -6,7 +6,8 @@ import { fileURLToPath } from 'url';
 import * as crypto from 'crypto';
 import {
     Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate,
-    RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, GTFSOptions, ProgressInfo
+    RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, GTFSOptions, ProgressInfo,
+    GTFSMergeStrategy, GTFSFeedConfig
 } from './types.js';
 
 export * from './types.js';
@@ -29,24 +30,15 @@ try {
             // Fallback for development/testing if addon not built
             if (process.env.NODE_ENV === 'test') {
                 GTFSAddon = class MockAddon {
-                    loadFromBuffer() { }
+                    loadFromBuffers() { }
                     getFeedInfo() { return []; }
-                    // Add other methods as no-ops
                     getRoutes() { return []; }
-                    getRoute() { return null; }
-                    getAgency() { return null; }
                     getAgencies() { return []; }
-                    getStop() { return null; }
                     getStops() { return []; }
-                    getStopTimesForTrip() { return []; }
-                    queryStopTimes() { return []; }
-                    getTrip() { return null; }
+                    getStopTimes() { return []; }
                     getTrips() { return []; }
-                    getShape() { return null; }
                     getShapes() { return []; }
-                    getCalendar() { return null; }
                     getCalendars() { return []; }
-                    getCalendarDatesForService() { return null; }
                     getCalendarDates() { return []; }
                     updateRealtime() { }
                     getRealtimeTripUpdates() { return []; }
@@ -90,6 +82,7 @@ export class GTFS {
     private ansi: boolean;
     private cacheDir?: string;
     private cache: boolean;
+    private mergeStrategy: GTFSMergeStrategy;
     private lastProgressUpdate: number = 0;
 
     constructor(options?: GTFSOptions) {
@@ -99,6 +92,7 @@ export class GTFS {
         this.ansi = options?.ansi || false;
         this.cacheDir = options?.cacheDir;
         this.cache = options?.cache || false;
+        this.mergeStrategy = options?.mergeStrategy !== undefined ? options.mergeStrategy : GTFSMergeStrategy.OVERWRITE;
     }
 
     private showProgress(task: string, current: number, total: number, speed: number, eta: number) {
@@ -132,66 +126,69 @@ export class GTFS {
         }
     }
 
-    async loadFromUrl(urlOrObj: string | { url: string; headers?: Record<string, string> }): Promise<void> {
-        const { url, headers } = typeof urlOrObj === 'string' ? { url: urlOrObj, headers: undefined } : urlOrObj;
+    async loadStatic(feeds: (GTFSFeedConfig | string)[] | GTFSFeedConfig | string): Promise<void> {
+        const feedList = Array.isArray(feeds) ? feeds : [feeds];
+        const buffers: Buffer[] = [];
 
-        let buffer: Buffer | null = null;
-        const cacheDir = this.cacheDir || './cache';
-        let cachePath = '';
+        for (const feed of feedList) {
+            const config: GTFSFeedConfig = typeof feed === 'string' ? { url: feed } : feed;
+            let buffer: Buffer | null = null;
+            const cacheDir = this.cacheDir || './cache';
+            let cachePath = '';
 
-        if (this.cache) {
-            // include headers in the cache key to avoid collisions when headers change
-            const keySource = headers ? `${url}|${JSON.stringify(headers)}` : url;
-            const hash = crypto.createHash('md5').update(keySource).digest('hex');
-            cachePath = path.join(cacheDir, hash);
+            if (this.cache) {
+                const keySource = config.headers ? `${config.url}|${JSON.stringify(config.headers)}` : config.url;
+                const hash = crypto.createHash('md5').update(keySource).digest('hex');
+                cachePath = path.join(cacheDir, hash);
 
-            if (fs.existsSync(cachePath)) {
-                const stats = fs.statSync(cachePath);
-                const age = Date.now() - stats.mtimeMs;
-                const oneDay = 24 * 60 * 60 * 1000;
+                if (fs.existsSync(cachePath)) {
+                    const stats = fs.statSync(cachePath);
+                    const age = Date.now() - stats.mtimeMs;
+                    const oneDay = 24 * 60 * 60 * 1000;
 
-                if (age < oneDay) {
-                    if (this.logger) this.logger(`Loading from cache: ${cachePath}`);
-                    try {
-                        buffer = fs.readFileSync(cachePath);
-                    } catch (e) {
-                        if (this.logger) this.logger(`Failed to read cache: ${e}`);
+                    if (age < oneDay) {
+                        if (this.logger) this.logger(`Loading from cache: ${cachePath}`);
+                        try {
+                            buffer = fs.readFileSync(cachePath);
+                        } catch (e) {
+                            if (this.logger) this.logger(`Failed to read cache: ${e}`);
+                        }
+                    } else {
+                        if (this.logger) this.logger(`Cache expired for ${config.url}, redownloading...`);
                     }
-                } else {
-                    if (this.logger) this.logger(`Cache expired for ${url}, redownloading...`);
                 }
             }
+
+            if (!buffer) {
+                if (this.logger) {
+                    if (this.ansi) {
+                        this.logger(`\x1b[32mDownloading ${config.url}...\x1b[0m`);
+                    } else {
+                        this.logger(`Downloading ${config.url}...`);
+                    }
+                }
+                buffer = await this.download(config.url, "Downloading", true, config.headers);
+
+                if (this.cache && cachePath) {
+                    if (!fs.existsSync(cacheDir)) {
+                        fs.mkdirSync(cacheDir, { recursive: true });
+                    }
+                    fs.writeFileSync(cachePath, buffer);
+                }
+            }
+            buffers.push(buffer as Buffer);
         }
 
-        if (!buffer) {
-            if (this.logger) {
-                if (this.ansi) {
-                    this.logger(`\x1b[32mDownloading ${url}...\x1b[0m`);
-                } else {
-                    this.logger(`Downloading ${url}...`);
-                }
-            }
-            buffer = await this.download(url, "Downloading", true, headers);
-
-            if (this.cache && cachePath) {
-                if (!fs.existsSync(cacheDir)) {
-                    fs.mkdirSync(cacheDir, { recursive: true });
-                }
-                fs.writeFileSync(cachePath, buffer);
-            }
-        }
-
-        return this.loadFromBuffer(buffer as Buffer);
+        return this.loadFromBuffers(buffers);
     }
 
-    async loadFromPath(path: string): Promise<void> {
-        const buffer = fs.readFileSync(path);
-        return this.loadFromBuffer(buffer);
+    async loadFromPath(paths: string[]): Promise<void> {
+        const buffers = paths.map(p => fs.readFileSync(p));
+        return this.loadFromBuffers(buffers);
     }
 
-    loadFromBuffer(buffer: Buffer): Promise<void> {
+    loadFromBuffers(buffers: Buffer[]): Promise<void> {
         const startTime = Date.now();
-        // We pass a callback that bridges C++ updates to our showProgress
         const progressBridge = (task: string, current: number, total: number) => {
             const now = Date.now();
             const elapsed = (now - startTime) / 1000;
@@ -201,75 +198,43 @@ export class GTFS {
             this.showProgress(task, current, total, speed, eta);
         };
 
-        return this.addonInstance.loadFromBuffer(buffer, this.logger, this.ansi, progressBridge);
+        return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge);
     }
 
-    getRoutes(): Route[] {
-        return this.addonInstance.getRoutes();
+    getRoutes(filter?: Partial<Route>): Route[] {
+        return this.addonInstance.getRoutes(filter);
     }
 
-    getRoute(routeId: string): Route | null {
-        return this.addonInstance.getRoute(routeId);
+    getAgencies(filter?: Partial<Agency>): Agency[] {
+        return this.addonInstance.getAgencies(filter);
     }
 
-    getAgency(agencyId: string): Agency | null {
-        return this.addonInstance.getAgency(agencyId);
+    getStops(filter?: Partial<Stop>): Stop[] {
+        return this.addonInstance.getStops(filter);
     }
 
-    getAgencies(): Agency[] {
-        return this.addonInstance.getAgencies();
-    }
-
-    getStop(stopId: string): Stop | null {
-        return this.addonInstance.getStop(stopId);
-    }
-
-    getStops(): Stop[] {
-        return this.addonInstance.getStops();
-    }
-
-    getStopTimesForTrip(tripId: string): StopTime[] {
-        return this.addonInstance.getStopTimesForTrip(tripId);
-    }
-
-    queryStopTimes(query: StopTimeQuery): StopTime[] {
-        return this.addonInstance.queryStopTimes(query);
+    getStopTimes(query?: StopTimeQuery): StopTime[] {
+        return this.addonInstance.getStopTimes(query || {});
     }
 
     getFeedInfo(): FeedInfo[] {
         return this.addonInstance.getFeedInfo();
     }
 
-    getTrip(tripId: string): Trip | null {
-        return this.addonInstance.getTrip(tripId);
+    getTrips(filter?: Partial<Trip>): Trip[] {
+        return this.addonInstance.getTrips(filter);
     }
 
-    getTrips(): Trip[] {
-        return this.addonInstance.getTrips();
+    getShapes(filter?: Partial<Shape>): Shape[] {
+        return this.addonInstance.getShapes(filter);
     }
 
-    getShape(shapeId: string): Shape[] | null {
-        return this.addonInstance.getShape(shapeId);
+    getCalendars(filter?: Partial<Calendar>): Calendar[] {
+        return this.addonInstance.getCalendars(filter);
     }
 
-    getShapes(): Shape[] {
-        return this.addonInstance.getShapes();
-    }
-
-    getCalendar(serviceId: string): Calendar | null {
-        return this.addonInstance.getCalendar(serviceId);
-    }
-
-    getCalendars(): Calendar[] {
-        return this.addonInstance.getCalendars();
-    }
-
-    getCalendarDatesForService(serviceId: string): CalendarDate[] | null {
-        return this.addonInstance.getCalendarDatesForService(serviceId);
-    }
-
-    getCalendarDates(): CalendarDate[] {
-        return this.addonInstance.getCalendarDates();
+    getCalendarDates(filter?: Partial<CalendarDate>): CalendarDate[] {
+        return this.addonInstance.getCalendarDates(filter);
     }
 
     updateRealtime(alerts: Buffer, tripUpdates: Buffer, vehiclePositions: Buffer): void {
@@ -277,17 +242,31 @@ export class GTFS {
     }
 
     async updateRealtimeFromUrl(
-        alertsArg?: string | { url: string; headers?: Record<string, string> } | null,
-        tripUpdatesArg?: string | { url: string; headers?: Record<string, string> } | null,
-        vehiclePositionsArg?: string | { url: string; headers?: Record<string, string> } | null
+        alertsArg?: (GTFSFeedConfig | string)[] | GTFSFeedConfig | string | null,
+        tripUpdatesArg?: (GTFSFeedConfig | string)[] | GTFSFeedConfig | string | null,
+        vehiclePositionsArg?: (GTFSFeedConfig | string)[] | GTFSFeedConfig | string | null
     ): Promise<void> {
+
+        const normalize = (arg: (GTFSFeedConfig | string)[] | GTFSFeedConfig | string | null | undefined): GTFSFeedConfig[] => {
+             if (!arg) return [];
+             if (Array.isArray(arg)) {
+                 return arg.map(a => typeof a === 'string' ? { url: a } : a);
+             }
+             if (typeof arg === 'string') return [{ url: arg }];
+             return [arg];
+        };
+
+        const alertConfigs = normalize(alertsArg);
+        const tuConfigs = normalize(tripUpdatesArg);
+        const vpConfigs = normalize(vehiclePositionsArg);
+
         const [alerts, tripUpdates, vehiclePositions] = await Promise.all([
-            alertsArg ? (typeof alertsArg === 'string' ? this.download(alertsArg, "Downloading Alerts", false) : this.download(alertsArg.url, "Downloading Alerts", false, alertsArg.headers)) : Promise.resolve(Buffer.alloc(0)),
-            tripUpdatesArg ? (typeof tripUpdatesArg === 'string' ? this.download(tripUpdatesArg, "Downloading TripUpdates", false) : this.download(tripUpdatesArg.url, "Downloading TripUpdates", false, tripUpdatesArg.headers)) : Promise.resolve(Buffer.alloc(0)),
-            vehiclePositionsArg ? (typeof vehiclePositionsArg === 'string' ? this.download(vehiclePositionsArg, "Downloading VehiclePositions", false) : this.download(vehiclePositionsArg.url, "Downloading VehiclePositions", false, vehiclePositionsArg.headers)) : Promise.resolve(Buffer.alloc(0))
+             Promise.all(alertConfigs.map(c => this.download(c.url, "Downloading Alerts", false, c.headers))),
+             Promise.all(tuConfigs.map(c => this.download(c.url, "Downloading TripUpdates", false, c.headers))),
+             Promise.all(vpConfigs.map(c => this.download(c.url, "Downloading VehiclePositions", false, c.headers)))
         ]);
 
-        this.updateRealtime(alerts, tripUpdates, vehiclePositions);
+        this.addonInstance.updateRealtime(alerts, tripUpdates, vehiclePositions);
     }
 
     getRealtimeTripUpdates(): RealtimeTripUpdate[] {
