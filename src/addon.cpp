@@ -971,11 +971,11 @@ Napi::Value GTFSAddon::GetCalendars(const Napi::CallbackInfo& info) {
     if (has_filter && filter.Has("service_id")) {
         std::string id = filter.Get("service_id").As<Napi::String>().Utf8Value();
         if (data.calendars.count(id)) {
-             matches.push_back(&data.calendars.at(id));
+            matches.push_back(&data.calendars.at(id));
         }
     } else {
         for (const auto& [id, c] : data.calendars) {
-             matches.push_back(&c);
+            matches.push_back(&c);
         }
     }
 
