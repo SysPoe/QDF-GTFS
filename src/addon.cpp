@@ -590,24 +590,24 @@ Napi::Value GTFSAddon::GetStops(const Napi::CallbackInfo& info) {
     matches.reserve(data.stops.size());
 
     if (has_filter && filter.Has("stop_id")) {
-         std::string id = filter.Get("stop_id").As<Napi::String>().Utf8Value();
-         if (data.stops.count(id)) {
-              const auto& s = data.stops.at(id);
-              bool ok = true;
-              if (filter.Has("stop_name")) {
-                  std::string v = filter.Get("stop_name").As<Napi::String>().Utf8Value();
-                  if (s.stop_name != v) ok = false;
-              }
-              if (filter.Has("zone_id")) {
-                   std::string v = filter.Get("zone_id").As<Napi::String>().Utf8Value();
-                   if (!s.zone_id.has_value() || s.zone_id.value() != v) ok = false;
-              }
-              if (filter.Has("parent_station")) {
-                  std::string v = filter.Get("parent_station").As<Napi::String>().Utf8Value();
-                  if (!s.parent_station.has_value() || s.parent_station.value() != v) ok = false;
-              }
-              if (ok) matches.push_back(&s);
-         }
+        std::string id = filter.Get("stop_id").As<Napi::String>().Utf8Value();
+        if (data.stops.count(id)) {
+            const auto& s = data.stops.at(id);
+            bool ok = true;
+            if (filter.Has("stop_name")) {
+                std::string v = filter.Get("stop_name").As<Napi::String>().Utf8Value();
+                if (s.stop_name != v) ok = false;
+            }
+            if (filter.Has("zone_id")) {
+                std::string v = filter.Get("zone_id").As<Napi::String>().Utf8Value();
+                if (!s.zone_id.has_value() || s.zone_id.value() != v) ok = false;
+            }
+            if (filter.Has("parent_station")) {
+                std::string v = filter.Get("parent_station").As<Napi::String>().Utf8Value();
+                if (!s.parent_station.has_value() || s.parent_station.value() != v) ok = false;
+            }
+            if (ok) matches.push_back(&s);
+        }
     } else {
         for (const auto& [id, s] : data.stops) {
             if (has_filter) {
