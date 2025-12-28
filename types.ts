@@ -349,6 +349,7 @@ export interface StopTimeQuery {
     date?: string; // YYYYMMDD
     start_time?: number | string; // Seconds or HH:MM:SS
     end_time?: number | string; // Seconds or HH:MM:SS
+    dateMode?: "timestamp" | "gtfs_date";
 }
 
 export interface ProgressInfo {
