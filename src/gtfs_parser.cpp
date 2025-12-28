@@ -16,8 +16,10 @@ namespace gtfs {
 using LogFn = std::function<void(const std::string&)>;
 using ProgressFn = std::function<void(std::string task, int64_t current, int64_t total)>;
 
+
 // Emit progress roughly every 64KB processed per file
 constexpr size_t PROGRESS_CHUNK_BYTES = 64 * 1024;
+
 
 // Helper to remove UTF-8 BOM if present
 void remove_bom(std::string& line) {
@@ -29,17 +31,16 @@ void remove_bom(std::string& line) {
     }
 }
 
+
 // Helper to convert "HH:MM:SS" to seconds
 int parse_time_seconds(const std::string& time_str) {
     if (time_str.empty()) return -1;
     const char* ptr = time_str.c_str();
 
-    // Skip leading whitespace
     while (*ptr == ' ') ptr++;
 
     int h = 0, m = 0, s = 0;
 
-    // Parse hours
     if (*ptr < '0' || *ptr > '9') return -1;
     while (*ptr >= '0' && *ptr <= '9') {
         h = h * 10 + (*ptr - '0');
@@ -48,7 +49,7 @@ int parse_time_seconds(const std::string& time_str) {
     if (*ptr != ':') return -1;
     ptr++;
 
-    // Parse minutes
+
     if (*ptr < '0' || *ptr > '9') return -1;
     while (*ptr >= '0' && *ptr <= '9') {
         m = m * 10 + (*ptr - '0');
@@ -57,26 +58,24 @@ int parse_time_seconds(const std::string& time_str) {
     if (*ptr != ':') return -1;
     ptr++;
 
-    // Parse seconds
+
     if (*ptr < '0' || *ptr > '9') return -1;
     while (*ptr >= '0' && *ptr <= '9') {
         s = s * 10 + (*ptr - '0');
         ptr++;
     }
 
-    // Skip trailing whitespace
-    while (*ptr == ' ') ptr++;
-    // If not at end of string, invalid input
-    if (*ptr != '\0') return -1;
-    // Validate minutes and seconds are in [0, 59]
+
     if (m < 0 || m > 59 || s < 0 || s > 59) return -1;
     return h * 3600 + m * 60 + s;
 }
 
+
 // Improved CSV parser
 std::vector<std::string> parse_csv_line(const std::string& line) {
     std::vector<std::string> result;
-    result.reserve(16); // Pre-allocate for typical GTFS row size
+
+    result.reserve(16); 
     std::string cell;
     cell.reserve(64);
 
@@ -92,7 +91,8 @@ std::vector<std::string> parse_csv_line(const std::string& line) {
             }
         } else if (c == ',' && !inside_quotes) {
             result.push_back(std::move(cell));
-            cell.clear(); // string is in valid state after move, clear resets it
+
+            cell.clear(); 
         } else if (c == '\r') {
              continue;
         } else {
@@ -193,6 +193,7 @@ size_t parse_agency(GTFSData& data, const std::string& content, int merge_strate
         if (!tmp.empty()) a.agency_fare_url = tmp;
         tmp = get_val(row, email_idx);
         if (!tmp.empty()) a.agency_email = tmp;
+
         // Use agency_id if present, otherwise fall back to agency_name as key
         std::string key = a.agency_id.has_value() ? a.agency_id.value() : a.agency_name;
         if (!a.agency_id.has_value()) a.agency_id = key; // ensure a usable id exists
@@ -273,8 +274,9 @@ size_t parse_routes(GTFSData& data, const std::string& content, int merge_strate
         tmp = get_val(row, network_id_idx);
         if (!tmp.empty()) r.network_id = tmp;
 
-        if (merge_strategy == 1 && data.routes.count(r.route_id)) continue; // IGNORE
-        if (merge_strategy == 2 && data.routes.count(r.route_id)) throw std::runtime_error("Duplicate route: " + r.route_id); // THROW
+
+        if (merge_strategy == 1 && data.routes.count(r.route_id)) continue; 
+        if (merge_strategy == 2 && data.routes.count(r.route_id)) throw std::runtime_error("Duplicate route: " + r.route_id); 
 
         data.routes[r.route_id] = r;
         count++;
@@ -339,8 +341,9 @@ size_t parse_trips(GTFSData& data, const std::string& content, int merge_strateg
         tmp = get_val(row, bikes_idx);
         if (!tmp.empty()) t.bikes_allowed = get_int(row, bikes_idx);
 
-        if (merge_strategy == 1 && data.trips.count(t.trip_id)) continue; // IGNORE
-        if (merge_strategy == 2 && data.trips.count(t.trip_id)) throw std::runtime_error("Duplicate trip: " + t.trip_id); // THROW
+
+        if (merge_strategy == 1 && data.trips.count(t.trip_id)) continue; 
+        if (merge_strategy == 2 && data.trips.count(t.trip_id)) throw std::runtime_error("Duplicate trip: " + t.trip_id); 
 
         data.trips[t.trip_id] = t;
         count++;
@@ -418,8 +421,9 @@ size_t parse_stops(GTFSData& data, const std::string& content, int merge_strateg
         tmp = get_val(row, platform_idx);
         if (!tmp.empty()) s.platform_code = tmp;
 
-        if (merge_strategy == 1 && data.stops.count(s.stop_id)) continue; // IGNORE
-        if (merge_strategy == 2 && data.stops.count(s.stop_id)) throw std::runtime_error("Duplicate stop: " + s.stop_id); // THROW
+
+        if (merge_strategy == 1 && data.stops.count(s.stop_id)) continue; 
+        if (merge_strategy == 2 && data.stops.count(s.stop_id)) throw std::runtime_error("Duplicate stop: " + s.stop_id); 
 
         data.stops[s.stop_id] = s;
         count++;
@@ -428,6 +432,7 @@ size_t parse_stops(GTFSData& data, const std::string& content, int merge_strateg
     if (on_progress && bytes_read > last_report) on_progress(bytes_read);
     return count;
 }
+
 
 // Updated to output to a specific vector, useful for multithreading
 size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t length, const std::vector<std::string>& headers, std::vector<StopTime>& out_vec, const std::function<void(size_t)>& on_progress = nullptr) {
@@ -462,7 +467,8 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
 
     size_t count = 0;
     while (std::getline(ss, line)) {
-        bytes_read += line.size() + 1; // include newline
+
+        bytes_read += line.size() + 1;
         if (line.empty()) continue;
 
         auto row = parse_csv_line(line);
@@ -548,8 +554,9 @@ size_t parse_calendar(GTFSData& data, const std::string& content, int merge_stra
         c.start_date = get_val(row, start_idx);
         c.end_date = get_val(row, end_idx);
 
-        if (merge_strategy == 1 && data.calendars.count(c.service_id)) continue; // IGNORE
-        if (merge_strategy == 2 && data.calendars.count(c.service_id)) throw std::runtime_error("Duplicate calendar: " + c.service_id); // THROW
+
+        if (merge_strategy == 1 && data.calendars.count(c.service_id)) continue; 
+        if (merge_strategy == 2 && data.calendars.count(c.service_id)) throw std::runtime_error("Duplicate calendar: " + c.service_id); 
 
         data.calendars[c.service_id] = c;
         count++;
@@ -591,7 +598,7 @@ size_t parse_calendar_dates(GTFSData& data, const std::string& content, int merg
         std::string date = get_val(row, date_idx);
         int exc = get_int(row, exc_idx);
 
-        // Calendar dates are (service_id, date) key
+
         if (merge_strategy == 1 && data.calendar_dates.count(service_id) && data.calendar_dates[service_id].count(date)) continue;
         if (merge_strategy == 2 && data.calendar_dates.count(service_id) && data.calendar_dates[service_id].count(date)) {
             throw std::runtime_error("Duplicate calendar_date: " + service_id + "/" + date);
@@ -630,7 +637,7 @@ size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<
     int seq_idx = get_col_index(headers, "shape_pt_sequence");
     int dist_idx = get_col_index(headers, "shape_dist_traveled");
 
-    // We need to group shapes by ID within this feed first
+
     std::unordered_map<std::string, std::vector<Shape>> feed_shapes;
 
     size_t count = 0;
@@ -651,12 +658,12 @@ size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<
         report_progress(bytes_read);
     }
 
-    // Merge into global map
+
     for (auto& [id, vec] : feed_shapes) {
         if (merge_strategy == 1 && merged_shapes.count(id)) continue;
         if (merge_strategy == 2 && merged_shapes.count(id)) throw std::runtime_error("Duplicate shape: " + id);
 
-        // Ensure shape points are ordered by sequence
+
         std::sort(vec.begin(), vec.end(), [](const Shape& a, const Shape& b){
             return a.shape_pt_sequence < b.shape_pt_sequence;
         });
@@ -669,9 +676,9 @@ size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<
 }
 
 size_t parse_feed_info(GTFSData& data, const std::string& content, int merge_strategy, const std::function<void(size_t)>& on_progress = nullptr) {
-    // Note: merge_strategy is intentionally ignored for feed_info; records are always appended.
+
     (void)merge_strategy;
-    // Append feed information records to the data store
+
     std::stringstream ss(content);
     std::string line;
     std::getline(ss, line);
@@ -723,7 +730,7 @@ size_t parse_feed_info(GTFSData& data, const std::string& content, int merge_str
         tmp = get_val(row, contact_url_idx);
         if (!tmp.empty()) f.feed_contact_url = tmp;
 
-        // Just append feed info
+
         data.feed_info.push_back(f);
         count++;
         report_progress(bytes_read);
@@ -752,7 +759,7 @@ void load_feeds(GTFSData& data, const std::vector<std::vector<unsigned char>>& z
             continue;
         }
 
-        // Calculate total uncompressed size for progress
+
         int64_t total_uncompressed_size = 0;
         int file_count = mz_zip_reader_get_num_files(&zip_archive);
 
@@ -787,7 +794,6 @@ void load_feeds(GTFSData& data, const std::vector<std::vector<unsigned char>>& z
         }
         mz_zip_reader_end(&zip_archive);
 
-        if (log) log("Files extracted to memory. Starting parallel parsing for feed " + std::to_string(feed_idx));
 
         std::vector<std::future<size_t>> futures;
         std::atomic<int64_t> processed_bytes(0);
@@ -917,7 +923,7 @@ void load_feeds(GTFSData& data, const std::vector<std::vector<unsigned char>>& z
                     current_pos = end_pos;
                 }
 
-                // Collect results
+
                 std::unordered_map<uint32_t, std::vector<StopTime>> current_feed_stop_times;
                 size_t total_count = 0;
 
@@ -929,17 +935,14 @@ void load_feeds(GTFSData& data, const std::vector<std::vector<unsigned char>>& z
                     }
                 }
 
-                // Merge
-                // The current feed's stop times are grouped by trip_id.
-                // We check against the globally merged stop times.
+
                 for(auto& [tid, vec] : current_feed_stop_times) {
                      if (merge_strategy == 1 && merged_stop_times.count(tid)) continue;
                      if (merge_strategy == 2 && merged_stop_times.count(tid)) {
-                        // Throwing from async thread
+
                         throw std::runtime_error("Duplicate trip_id in stop_times: " + data.string_pool.get(tid));
                      }
-                     // OVERWRITE or NEW
-                     // Sort by sequence to be safe
+
                      std::sort(vec.begin(), vec.end(), [](const StopTime& a, const StopTime& b){
                         return a.stop_sequence < b.stop_sequence;
                      });
@@ -957,16 +960,17 @@ void load_feeds(GTFSData& data, const std::vector<std::vector<unsigned char>>& z
         if (stop_times_future.valid()) {
             stop_times_future.get();
         }
-    } // End zip loop
+
+    } 
 
     if (log) log("All feeds loaded. Finalizing data...");
 
-    // Flatten shapes
+
     for(auto& [id, vec] : merged_shapes) {
         data.shapes.insert(data.shapes.end(), vec.begin(), vec.end());
     }
 
-    // Flatten stop_times
+
     size_t total_st = 0;
     for(const auto& [tid, vec] : merged_stop_times) {
         total_st += vec.size();
@@ -994,4 +998,5 @@ void load_feeds(GTFSData& data, const std::vector<std::vector<unsigned char>>& z
     if (log) log("GTFS Data Loading Complete.");
 }
 
-} // namespace gtfs
+
+} 

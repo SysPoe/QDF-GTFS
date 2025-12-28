@@ -6,8 +6,9 @@
 #include <string_view>
 #include <vector>
 #include <functional>
+#include <iomanip>
 
-// Simple logger interface
+
 struct Logger {
     Napi::ThreadSafeFunction tsfn;
     Napi::ThreadSafeFunction progress_tsfn;
@@ -107,10 +108,13 @@ private:
     Napi::Value GetRealtimeVehiclePositions(const Napi::CallbackInfo& info);
     Napi::Value GetRealtimeAlerts(const Napi::CallbackInfo& info);
 
+
     // Helpers
     bool IsServiceActive(const std::string& service_id, const std::string& date_str);
     int GetDayOfWeek(const std::string& date_str);
+    std::string GetPreviousDate(const std::string& date_str);
 };
+
 
 // --- Helpers ---
 int GTFSAddon::GetDayOfWeek(const std::string& date_str) {
@@ -138,16 +142,48 @@ int GTFSAddon::GetDayOfWeek(const std::string& date_str) {
     }
 }
 
+std::string GTFSAddon::GetPreviousDate(const std::string& date_str) {
+    if (date_str.length() != 8) return "";
+    try {
+        int y = std::stoi(date_str.substr(0, 4));
+        int m = std::stoi(date_str.substr(4, 2));
+        int d = std::stoi(date_str.substr(6, 2));
+
+        std::tm time_in = {};
+
+
+        time_in.tm_mday = d - 1; 
+        time_in.tm_mon  = m - 1;
+        time_in.tm_year = y - 1900;
+        time_in.tm_isdst = -1;
+
+        std::time_t time_temp = std::mktime(&time_in);
+        if (time_temp == -1) return "";
+
+        const std::tm * time_out = std::localtime(&time_temp);
+
+        std::stringstream ss;
+        ss << (time_out->tm_year + 1900)
+           << std::setfill('0') << std::setw(2) << (time_out->tm_mon + 1)
+           << std::setfill('0') << std::setw(2) << time_out->tm_mday;
+        return ss.str();
+    } catch(...) {
+        return "";
+    }
+}
+
 bool CheckServiceActiveLogic(const gtfs::GTFSData& data, const std::string& service_id, const std::string& date_str, int wday) {
+    // Check calendar_dates.txt for exceptions
     if (data.calendar_dates.count(service_id)) {
         const auto& dates = data.calendar_dates.at(service_id);
         if (dates.count(date_str)) {
             int exception = dates.at(date_str);
-            if (exception == 1) return true; 
-            if (exception == 2) return false; 
+            if (exception == 1) return true; // Service added
+            if (exception == 2) return false; // Service removed
         }
     }
 
+    // Check calendar.txt
     if (data.calendars.count(service_id)) {
         const auto& cal = data.calendars.at(service_id);
         if (date_str < cal.start_date || date_str > cal.end_date) {
@@ -291,6 +327,7 @@ Napi::Value GTFSAddon::GetRoutes(const Napi::CallbackInfo& info) {
     if (has_filter && filter.Has("route_id")) {
         std::string id = filter.Get("route_id").As<Napi::String>().Utf8Value();
         if (data.routes.count(id)) {
+
             const auto& r = data.routes.at(id);
             bool ok = true;
             if (filter.Has("agency_id")) {
@@ -702,8 +739,80 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
         has_date = (date_wday != -1); 
     }
 
-    std::vector<const gtfs::StopTime*> results;
+    std::string dateMode = "gtfs_date";
+    if (config.Has("dateMode") && config.Get("dateMode").IsString()) {
+        dateMode = config.Get("dateMode").As<Napi::String>().Utf8Value();
+    }
+    bool timestamp_mode = (dateMode == "timestamp");
+
+
+    std::string prev_date_str;
+    int prev_date_wday = -1;
+    if (has_date && timestamp_mode) {
+        prev_date_str = GetPreviousDate(filter_date);
+        prev_date_wday = GetDayOfWeek(prev_date_str);
+    }
+
+    std::vector<std::pair<const gtfs::StopTime*, int>> results;
+
     std::unordered_map<std::string, bool> service_cache;
+
+    auto check_service = [&](const std::string& trip_id_str, const std::string& date_s, int wday) -> bool {
+        if (!data.trips.count(trip_id_str)) return false;
+        const std::string& service_id = data.trips.at(trip_id_str).service_id;
+        std::string key = service_id + "|" + date_s;
+        if (service_cache.count(key)) return service_cache.at(key);
+
+        bool active = CheckServiceActiveLogic(data, service_id, date_s, wday);
+        service_cache[key] = active;
+        return active;
+    };
+
+    auto check_inclusion = [&](const gtfs::StopTime& st) {
+        if (has_trip_id && st.trip_id != filter_trip_id) return;
+        if (has_stop_id && st.stop_id != filter_stop_id) return;
+
+        bool active_today = true;
+        bool active_yesterday = false;
+
+        if (has_date) {
+            std::string trip_id_str = data.string_pool.get(st.trip_id);
+            active_today = check_service(trip_id_str, filter_date, date_wday);
+            if (timestamp_mode && !prev_date_str.empty()) {
+                active_yesterday = check_service(trip_id_str, prev_date_str, prev_date_wday);
+            }
+        }
+
+        if (active_today) {
+            bool match_today = true;
+            if (has_time_window) {
+                 bool arrival_in = (st.arrival_time.has_value() && st.arrival_time.value() >= filter_start_time && st.arrival_time.value() <= filter_end_time);
+                 bool departure_in = (st.departure_time.has_value() && st.departure_time.value() >= filter_start_time && st.departure_time.value() <= filter_end_time);
+                 if (!arrival_in && !departure_in) match_today = false;
+            }
+            if (match_today) results.push_back({&st, 0});
+        }
+
+        if (active_yesterday) {
+            bool match_yesterday = true;
+
+            bool arrival_spill = (st.arrival_time.has_value() && st.arrival_time.value() >= 86400);
+            bool departure_spill = (st.departure_time.has_value() && st.departure_time.value() >= 86400);
+
+            if (!arrival_spill && !departure_spill) {
+                match_yesterday = false;
+            } else if (has_time_window) {
+                 int shifted_start = filter_start_time + 86400;
+                 int shifted_end = filter_end_time + 86400;
+
+                 bool arrival_in = (st.arrival_time.has_value() && st.arrival_time.value() >= shifted_start && st.arrival_time.value() <= shifted_end);
+                 bool departure_in = (st.departure_time.has_value() && st.departure_time.value() >= shifted_start && st.departure_time.value() <= shifted_end);
+
+                 if (!arrival_in && !departure_in) match_yesterday = false;
+            }
+            if (match_yesterday) results.push_back({&st, -1});
+        }
+    };
 
     if (has_trip_id) {
         gtfs::StopTime target;
@@ -716,105 +825,27 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
         );
 
         for (auto it = range.first; it != range.second; ++it) {
-            const gtfs::StopTime& st = *it;
-            if (has_stop_id && st.stop_id != filter_stop_id) continue;
-
-            if (has_time_window) {
-                bool arrival_in = (st.arrival_time.has_value() && st.arrival_time.value() >= filter_start_time && st.arrival_time.value() <= filter_end_time);
-                bool departure_in = (st.departure_time.has_value() && st.departure_time.value() >= filter_start_time && st.departure_time.value() <= filter_end_time);
-                if (!arrival_in && !departure_in) continue;
-            }
-
-            if (has_date) {
-                std::string trip_id_str = data.string_pool.get(st.trip_id);
-                if (data.trips.count(trip_id_str)) {
-                    const std::string& service_id = data.trips.at(trip_id_str).service_id;
-                    
-                    bool active = false;
-                    if (service_cache.count(service_id)) {
-                        active = service_cache.at(service_id);
-                    } else {
-                        active = CheckServiceActiveLogic(data, service_id, filter_date, date_wday);
-                        service_cache[service_id] = active;
-                    }
-                    if (!active) continue;
-                } else {
-                    continue; 
-                }
-            }
-
-            results.push_back(&st);
+            check_inclusion(*it);
         }
 
     } else if (has_stop_id) {
         if (data.stop_times_by_stop_id.count(filter_stop_id)) {
             const auto& indices = data.stop_times_by_stop_id.at(filter_stop_id);
             for (size_t idx : indices) {
-                const gtfs::StopTime& st = data.stop_times[idx];
-
-                if (has_trip_id && st.trip_id != filter_trip_id) continue;
-
-                if (has_time_window) {
-                    bool arrival_in = (st.arrival_time.has_value() && st.arrival_time.value() >= filter_start_time && st.arrival_time.value() <= filter_end_time);
-                    bool departure_in = (st.departure_time.has_value() && st.departure_time.value() >= filter_start_time && st.departure_time.value() <= filter_end_time);
-                    if (!arrival_in && !departure_in) continue;
-                }
-
-                if (has_date) {
-                    std::string trip_id_str = data.string_pool.get(st.trip_id);
-                    if (data.trips.count(trip_id_str)) {
-                        const std::string& service_id = data.trips.at(trip_id_str).service_id;
-                        bool active = false;
-                        if (service_cache.count(service_id)) {
-                            active = service_cache.at(service_id);
-                        } else {
-                            active = CheckServiceActiveLogic(data, service_id, filter_date, date_wday);
-                            service_cache[service_id] = active;
-                        }
-                        if (!active) continue;
-                    } else {
-                        continue;
-                    }
-                }
-                
-                results.push_back(&st);
+                check_inclusion(data.stop_times[idx]);
             }
         }
     } else {
-        // Full Scan
-        for (const auto& st : data.stop_times) {
-            if (has_trip_id && st.trip_id != filter_trip_id) continue;
-            if (has_stop_id && st.stop_id != filter_stop_id) continue;
-            
-            if (has_time_window) {
-                bool arrival_in = (st.arrival_time.has_value() && st.arrival_time.value() >= filter_start_time && st.arrival_time.value() <= filter_end_time);
-                bool departure_in = (st.departure_time.has_value() && st.departure_time.value() >= filter_start_time && st.departure_time.value() <= filter_end_time);
-                if (!arrival_in && !departure_in) continue;
-            }
 
-            if (has_date) {
-                std::string trip_id_str = data.string_pool.get(st.trip_id);
-                if (data.trips.count(trip_id_str)) {
-                    const std::string& service_id = data.trips.at(trip_id_str).service_id;
-                    bool active = false;
-                    if (service_cache.count(service_id)) {
-                        active = service_cache.at(service_id);
-                    } else {
-                        active = CheckServiceActiveLogic(data, service_id, filter_date, date_wday);
-                        service_cache[service_id] = active;
-                    }
-                    if (!active) continue;
-                } else {
-                    continue;
-                }
-            }
-            results.push_back(&st);
+        for (const auto& st : data.stop_times) {
+            check_inclusion(st);
         }
     }
 
     Napi::Array arr = Napi::Array::New(env, results.size());
     for(size_t i = 0; i < results.size(); ++i) {
-        const gtfs::StopTime* st = results[i];
+        const gtfs::StopTime* st = results[i].first;
+
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("trip_id", data.string_pool.get(st->trip_id));
         if (st->arrival_time.has_value()) obj.Set("arrival_time", st->arrival_time.value());
@@ -869,44 +900,68 @@ Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
         has_filter = true;
     }
 
-    std::vector<const gtfs::Trip*> matches;
-    matches.reserve(data.trips.size());
+    std::string f_trip_id, f_route_id, f_service_id, f_date, f_block_id;
+    int f_direction_id = -1;
+    bool has_trip_id = has_filter && filter.Has("trip_id") && filter.Get("trip_id").IsString();
+    bool has_route_id = has_filter && filter.Has("route_id") && filter.Get("route_id").IsString();
+    bool has_service_id = has_filter && filter.Has("service_id") && filter.Get("service_id").IsString();
+    bool has_date = has_filter && filter.Has("date") && filter.Get("date").IsString();
+    bool has_block_id = has_filter && filter.Has("block_id") && filter.Get("block_id").IsString();
+    bool has_direction_id = has_filter && filter.Has("direction_id") && !filter.Get("direction_id").IsNull();
 
-    if (has_filter && filter.Has("trip_id")) {
-        std::string id = filter.Get("trip_id").As<Napi::String>().Utf8Value();
-        if (data.trips.count(id)) {
-            const auto& t = data.trips.at(id);
-            bool ok = true;
-            if (filter.Has("route_id")) {
-                std::string v = filter.Get("route_id").As<Napi::String>().Utf8Value();
-                if (t.route_id != v) ok = false;
+    if (has_trip_id) f_trip_id = filter.Get("trip_id").As<Napi::String>().Utf8Value();
+    if (has_route_id) f_route_id = filter.Get("route_id").As<Napi::String>().Utf8Value();
+    if (has_service_id) f_service_id = filter.Get("service_id").As<Napi::String>().Utf8Value();
+    if (has_date) f_date = filter.Get("date").As<Napi::String>().Utf8Value();
+    if (has_block_id) f_block_id = filter.Get("block_id").As<Napi::String>().Utf8Value();
+    if (has_direction_id) {
+        if (filter.Get("direction_id").IsNumber()) f_direction_id = filter.Get("direction_id").As<Napi::Number>().Int32Value();
+        else if (filter.Get("direction_id").IsString()) f_direction_id = std::stoi(filter.Get("direction_id").As<Napi::String>().Utf8Value());
+    }
+
+    int date_wday = -1;
+    if (has_date) {
+        date_wday = GetDayOfWeek(f_date);
+    }
+
+    std::vector<const gtfs::Trip*> matches;
+    std::unordered_map<std::string, bool> service_cache;
+
+    auto check_trip = [&](const gtfs::Trip& t) -> bool {
+        if (has_route_id && t.route_id != f_route_id) return false;
+        if (has_service_id && t.service_id != f_service_id) return false;
+        if (has_block_id && (!t.block_id.has_value() || t.block_id.value() != f_block_id)) return false;
+        if (has_direction_id && (!t.direction_id.has_value() || t.direction_id.value() != f_direction_id)) return false;
+
+        if (has_date && date_wday != -1) {
+            bool active = false;
+            auto it = service_cache.find(t.service_id);
+            if (it != service_cache.end()) {
+                active = it->second;
+            } else {
+                active = CheckServiceActiveLogic(data, t.service_id, f_date, date_wday);
+                service_cache[t.service_id] = active;
             }
-             if (filter.Has("service_id")) {
-                std::string v = filter.Get("service_id").As<Napi::String>().Utf8Value();
-                if (t.service_id != v) ok = false;
-            }
-            if (ok) matches.push_back(&t);
+            if (!active) return false;
+        }
+        return true;
+    };
+
+    if (has_trip_id) {
+        if (data.trips.count(f_trip_id)) {
+            const auto& t = data.trips.at(f_trip_id);
+            if (check_trip(t)) matches.push_back(&t);
         }
     } else {
+        matches.reserve(data.trips.size());
         for (const auto& [id, t] : data.trips) {
-            if (has_filter) {
-                if (filter.Has("route_id")) {
-                    std::string v = filter.Get("route_id").As<Napi::String>().Utf8Value();
-                    if (t.route_id != v) continue;
-                }
-                 if (filter.Has("service_id")) {
-                    std::string v = filter.Get("service_id").As<Napi::String>().Utf8Value();
-                    if (t.service_id != v) continue;
-                }
-            }
-            matches.push_back(&t);
+            if (check_trip(t)) matches.push_back(&t);
         }
     }
 
     Napi::Array arr = Napi::Array::New(env, matches.size());
-    int i = 0;
-    for (const auto* t_ptr : matches) {
-        const auto& t = *t_ptr;
+    for (size_t i = 0; i < matches.size(); ++i) {
+        const auto& t = *matches[i];
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("trip_id", t.trip_id);
         obj.Set("route_id", t.route_id);
@@ -918,7 +973,7 @@ Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
         if (t.shape_id.has_value()) obj.Set("shape_id", t.shape_id.value()); else obj.Set("shape_id", env.Null());
         if (t.wheelchair_accessible.has_value()) obj.Set("wheelchair_accessible", t.wheelchair_accessible.value()); else obj.Set("wheelchair_accessible", env.Null());
         if (t.bikes_allowed.has_value()) obj.Set("bikes_allowed", t.bikes_allowed.value()); else obj.Set("bikes_allowed", env.Null());
-        arr[i++] = obj;
+        arr[i] = obj;
     }
     return arr;
 }
@@ -1003,7 +1058,6 @@ Napi::Value GTFSAddon::GetCalendarDates(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     std::vector<gtfs::CalendarDate> flat_list;
 
-    // Support filtering?
     Napi::Object filter;
     bool has_filter = false;
     if (info.Length() > 0 && info[0].IsObject()) {

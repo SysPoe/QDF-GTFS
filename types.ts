@@ -1,6 +1,5 @@
 
 // Enums
-
 export enum RouteType {
     Tram = 0,
     Subway = 1,
@@ -68,8 +67,8 @@ export enum BikesAllowed {
     NotAllowed = 2
 }
 
-// Realtime Enums
 
+// Realtime Enums
 export enum TripScheduleRelationship {
     SCHEDULED = 0,
     ADDED = 1,
@@ -265,7 +264,7 @@ export interface Calendar {
 
 export interface CalendarDate {
     service_id: string;
-    date: string;
+    date?: string; // YYYYMMDD
     exception_type: number;
 }
 
@@ -343,12 +342,24 @@ export interface RealtimeAlert {
     severity_level: AlertSeverityLevel | null;
 }
 
+export interface TripQuery {
+    trip_id?: string;
+    route_id?: string;
+    service_id?: string;
+    direction_id?: number | string;
+    block_id?: string;
+    date?: string; // YYYYMMDD
+    start_time?: number | string; // Seconds or HH:MM:SS
+    end_time?: number | string; // Seconds or HH:MM:SS
+}
+
 export interface StopTimeQuery {
     stop_id?: string;
     trip_id?: string;
     date?: string; // YYYYMMDD
     start_time?: number | string; // Seconds or HH:MM:SS
     end_time?: number | string; // Seconds or HH:MM:SS
+    dateMode?: "timestamp" | "gtfs_date";
 }
 
 export interface ProgressInfo {
@@ -356,8 +367,8 @@ export interface ProgressInfo {
     total: number;
     current: number;
     percent: number;
-    speed?: number; // bytes/sec
-    eta?: number; // seconds
+    speed?: number;
+    eta?: number;
 }
 
 export interface GTFSOptions {
