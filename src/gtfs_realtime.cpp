@@ -7,13 +7,9 @@
 
 namespace gtfs {
 
-// --- Helper Functions for Nanopb Decoders ---
-
-// Decodes a string from a protobuf field
 bool decode_string(pb_istream_t *stream, const pb_field_t *field, void **arg) {
     std::string* str = (std::string*)*arg;
 
-    // We need to read the data into a buffer first
     size_t len = stream->bytes_left;
     std::vector<char> buffer(len);
 
@@ -25,35 +21,28 @@ bool decode_string(pb_istream_t *stream, const pb_field_t *field, void **arg) {
     return true;
 }
 
-// Helper struct for TranslatedString decoding
 struct TranslatedStringContext {
     std::string* target;
 };
 
-// --- Main Parsing Functions ---
-
-// 1. Trip Updates
 
 struct TripUpdateContext {
     GTFSData* data;
     RealtimeTripUpdate current_update;
 };
 
-// 2. Vehicle Positions
 
 struct VehiclePositionContext {
     GTFSData* data;
     RealtimeVehiclePosition current_pos;
 };
 
-// 3. Alerts
 
 struct AlertContext {
     GTFSData* data;
     RealtimeAlert current_alert;
 };
 
-// Callback for TranslatedString
 bool decode_translated_string_content(pb_istream_t *stream, const pb_field_t *field, void **arg) {
     std::string* inner_str = (std::string*)*arg;
     GTFSv2_Realtime_TranslatedString_Translation t = GTFSv2_Realtime_TranslatedString_Translation_init_zero;
@@ -76,7 +65,6 @@ void setup_translated_string_decoding(GTFSv2_Realtime_TranslatedString& ts, std:
     ts.translation.arg = target;
 }
 
-// --- Main Entry Points ---
 
 void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, int type) {
     GTFSv2_Realtime_FeedMessage message = GTFSv2_Realtime_FeedMessage_init_zero;
@@ -86,7 +74,6 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
 
         GTFSv2_Realtime_FeedEntity entity = GTFSv2_Realtime_FeedEntity_init_zero;
 
-        // Setup contexts
         TripUpdateContext tu_ctx;
         tu_ctx.data = data;
 
@@ -96,16 +83,11 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         AlertContext al_ctx;
         al_ctx.data = data;
 
-        // We are decoding FeedEntity.
-        // Inside FeedEntity, we have OPTIONAL MESSAGEs: trip_update, vehicle, alert.
-        // We need to pre-configure their callbacks because they are decoded recursively as part of FeedEntity.
 
-        // Capture entity ID and is_deleted
         entity.id.funcs.decode = decode_string;
         std::string entity_id;
         entity.id.arg = &entity_id;
 
-        // --- Trip Update Setup ---
         entity.trip_update.trip.trip_id.funcs.decode = decode_string;
         entity.trip_update.trip.trip_id.arg = &tu_ctx.current_update.trip.trip_id;
 
@@ -139,11 +121,8 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
 
             stu.stop_sequence = pb_stu.stop_sequence;
             stu.schedule_relationship = pb_stu.schedule_relationship;
-            // Propagate trip_id
             stu.trip_id = inner_ctx->current_update.trip.trip_id;
-            // Propagate start_date from trip update
             stu.start_date = inner_ctx->current_update.trip.start_date;
-            // Propagate start_time from trip update
             stu.start_time = inner_ctx->current_update.trip.start_time;
 
             if (pb_stu.has_arrival) {
@@ -188,7 +167,6 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         entity.trip_update.stop_time_update.arg = &tu_ctx;
 
 
-        // --- Vehicle Position Setup ---
         entity.vehicle.trip.trip_id.funcs.decode = decode_string;
         entity.vehicle.trip.trip_id.arg = &vp_ctx.current_pos.trip.trip_id;
 
@@ -214,22 +192,18 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         entity.vehicle.stop_id.arg = &vp_ctx.current_pos.stop_id;
 
 
-        // --- Alert Setup ---
         setup_translated_string_decoding(entity.alert.header_text, &al_ctx.current_alert.header_text);
         setup_translated_string_decoding(entity.alert.description_text, &al_ctx.current_alert.description_text);
         setup_translated_string_decoding(entity.alert.url, &al_ctx.current_alert.url);
 
-        // Decode
         if (!pb_decode(stream, GTFSv2_Realtime_FeedEntity_fields, &entity))
             return false;
 
-        // Post-decode logic to save data
         if (entity.has_trip_update) {
             tu_ctx.current_update.update_id = entity_id;
             tu_ctx.current_update.is_deleted = entity.is_deleted;
 
             if (entity.trip_update.has_timestamp) tu_ctx.current_update.timestamp = entity.trip_update.timestamp;
-            // else 0 (sentinel)
 
             if (entity.trip_update.has_delay) tu_ctx.current_update.delay = entity.trip_update.delay;
             else tu_ctx.current_update.delay = -2147483648;
@@ -240,7 +214,6 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
             if (entity.trip_update.trip.has_schedule_relationship) tu_ctx.current_update.trip.schedule_relationship = entity.trip_update.trip.schedule_relationship;
             else tu_ctx.current_update.trip.schedule_relationship = 0;
 
-            // Retroactively set trip_id on stop_time_updates if it wasn't available during their parse
             for(auto& stu : tu_ctx.current_update.stop_time_updates) {
                 if(stu.trip_id.empty()) {
                     stu.trip_id = tu_ctx.current_update.trip.trip_id;
@@ -261,7 +234,6 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
              else vp_ctx.current_pos.current_status = -1;
 
              if (entity.vehicle.has_timestamp) vp_ctx.current_pos.timestamp = entity.vehicle.timestamp;
-             // else 0
 
              if (entity.vehicle.has_congestion_level) vp_ctx.current_pos.congestion_level = entity.vehicle.congestion_level;
              else vp_ctx.current_pos.congestion_level = -1;
@@ -320,4 +292,4 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
     }
 }
 
-} // namespace gtfs
+}

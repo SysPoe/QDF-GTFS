@@ -1,6 +1,4 @@
 
-// Enums
-
 export enum RouteType {
     Tram = 0,
     Subway = 1,
@@ -68,7 +66,6 @@ export enum BikesAllowed {
     NotAllowed = 2
 }
 
-// Realtime Enums
 
 export enum TripScheduleRelationship {
     SCHEDULED = 0,
@@ -147,9 +144,9 @@ export enum AlertSeverityLevel {
 }
 
 export enum GTFSMergeStrategy {
-    OVERWRITE = 0, // Overwrite existing IDs
-    IGNORE = 1,    // Ignore if ID exists
-    THROW = 2      // Throw error if ID exists
+    OVERWRITE = 0,
+    IGNORE = 1,
+    THROW = 2
 }
 
 export interface GTFSFeedConfig {
@@ -205,8 +202,8 @@ export interface Stop {
 export interface StopTime {
     trip_id: string;
     stop_id: string;
-    arrival_time: number | null; // Seconds since midnight (null when missing)
-    departure_time: number | null; // Seconds since midnight (null when missing)
+    arrival_time: number | null;
+    departure_time: number | null;
     stop_sequence: number;
     stop_headsign: string | null;
     pickup_type: PickupType;
@@ -343,6 +340,15 @@ export interface RealtimeAlert {
     severity_level: AlertSeverityLevel | null;
 }
 
+export interface TripQuery {
+    trip_id?: string;
+    route_id?: string;
+    service_id?: string;
+    direction_id?: number | string;
+    block_id?: string;
+    date?: string; // YYYYMMDD
+}
+
 export interface StopTimeQuery {
     stop_id?: string;
     trip_id?: string;
@@ -357,8 +363,8 @@ export interface ProgressInfo {
     total: number;
     current: number;
     percent: number;
-    speed?: number; // bytes/sec
-    eta?: number; // seconds
+    speed?: number;
+    eta?: number;
 }
 
 export interface GTFSOptions {
@@ -370,7 +376,6 @@ export interface GTFSOptions {
     mergeStrategy?: GTFSMergeStrategy;
 }
 
-// Helper fns
 export function formatTimestamp(ts?: number | null): string {
     if (ts === null || ts === undefined) return "--:--";
     let h = Math.floor(ts / 3600);

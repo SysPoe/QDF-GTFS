@@ -14,7 +14,6 @@
 
 namespace gtfs {
 
-// String Pool for memory optimization
 class StringPool {
     std::unordered_map<std::string, uint32_t> str_to_id;
     std::vector<std::string> id_to_str;
@@ -46,7 +45,6 @@ public:
         return "";
     }
     
-    // Check if string exists without creating it
     bool exists(const std::string& s) const {
         std::shared_lock<std::shared_mutex> lock(mutex_);
         return str_to_id.count(s);
@@ -55,7 +53,7 @@ public:
     uint32_t get_id(const std::string& s) const {
         std::shared_lock<std::shared_mutex> lock(mutex_);
         if (str_to_id.count(s)) return str_to_id.at(s);
-        return 0xFFFFFFFF; // Sentinel for not found
+        return 0xFFFFFFFF;
     }
 };
 
@@ -79,13 +77,13 @@ struct Calendar {
     bool friday;
     bool saturday;
     bool sunday;
-    std::string start_date; // YYYYMMDD
-    std::string end_date;   // YYYYMMDD
+    std::string start_date;
+    std::string end_date;
 };
 
 struct CalendarDate {
     std::string service_id;
-    std::string date;       // YYYYMMDD
+    std::string date;
     int exception_type;
 };
 
@@ -124,12 +122,12 @@ struct Stop {
 };
 
 struct StopTime {
-    uint32_t trip_id;       // Interned ID
-    std::optional<int> arrival_time;       // Seconds since midnight
-    std::optional<int> departure_time;     // Seconds since midnight
-    uint32_t stop_id;       // Interned ID
+    uint32_t trip_id;
+    std::optional<int> arrival_time;
+    std::optional<int> departure_time;
+    uint32_t stop_id;
     int stop_sequence;
-    std::optional<uint32_t> stop_headsign; // Interned ID
+    std::optional<uint32_t> stop_headsign;
     int pickup_type;
     int drop_off_type;
     std::optional<double> shape_dist_traveled = std::nullopt;
@@ -171,7 +169,6 @@ struct FeedInfo {
     std::optional<std::string> feed_contact_url = std::nullopt;
 };
 
-// Realtime Structures
 struct RealtimeTripDescriptor {
     std::string trip_id;
     std::string route_id;
@@ -191,8 +188,8 @@ struct RealtimeStopTimeUpdate {
     int stop_sequence = -1;
     std::string stop_id;
     std::string trip_id;
-    std::string start_date; // Reflect start_date from trip update
-    std::string start_time; // Reflect start_time from trip update
+    std::string start_date;
+    std::string start_time;
     int arrival_delay = -2147483648;
     int64_t arrival_time = -1;
     int arrival_uncertainty = -1;
@@ -242,7 +239,6 @@ struct RealtimeAlert {
     bool is_deleted = false;
     std::vector<std::string> active_period_start;
     std::vector<std::string> active_period_end;
-    // Simplified for now, complex to map all EntitySelectors
     int cause = -1;
     int effect = -1;
     std::string url;
@@ -255,7 +251,6 @@ class GTFSData {
 public:
     StringPool string_pool;
 
-    // Realtime Data Containers
     std::vector<RealtimeTripUpdate> realtime_trip_updates;
     std::vector<RealtimeVehiclePosition> realtime_vehicle_positions;
     std::vector<RealtimeAlert> realtime_alerts;
@@ -293,6 +288,6 @@ public:
     }
 };
 
-} // namespace gtfs
+}
 
 #endif

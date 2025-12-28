@@ -27,7 +27,6 @@ try {
             const binding = r(path.join(__dirname, '../build/Release/gtfs_addon.node'));
             GTFSAddon = binding.GTFSAddon;
         } catch (e2) {
-            // Fallback for development/testing if addon not built
             if (process.env.NODE_ENV === 'test') {
                 GTFSAddon = class MockAddon {
                     loadFromBuffers() { }
@@ -55,7 +54,6 @@ try {
     throw e;
 }
 
-// Helpers for formatting
 function formatBytes(bytes: number): string {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -97,7 +95,6 @@ export class GTFS {
 
     private showProgress(task: string, current: number, total: number, speed: number, eta: number) {
         const now = Date.now();
-        // Throttle updates to every 100ms to prevent stdout spam and reduce CPU usage
         if (now - this.lastProgressUpdate < 100 && current < total) {
             return;
         }
@@ -237,7 +234,7 @@ export class GTFS {
         return this.addonInstance.getCalendarDates(filter);
     }
 
-    updateRealtime(alerts: Buffer, tripUpdates: Buffer, vehiclePositions: Buffer): void {
+    updateRealtime(alerts: Buffer | Buffer[], tripUpdates: Buffer | Buffer[], vehiclePositions: Buffer | Buffer[]): void {
         this.addonInstance.updateRealtime(alerts, tripUpdates, vehiclePositions);
     }
 
@@ -315,15 +312,13 @@ export class GTFS {
                 });
 
                 res.on('end', () => {
-                    // Ensure 100%
                     if (showProgressBar) {
                         const now = Date.now();
                         const elapsed = (now - startTime) / 1000;
                         const speed = elapsed > 0 ? current / elapsed : 0;
-                        // Force update
                         this.lastProgressUpdate = 0;
                         this.showProgress(taskName, current, total, speed, 0);
-                        if (this.ansi) process.stdout.write('\n'); // Clear line
+                        if (this.ansi) process.stdout.write('\n');
                     }
                     resolve(Buffer.concat(data))
                 });
