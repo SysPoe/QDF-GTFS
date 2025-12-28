@@ -258,9 +258,9 @@ export class GTFS {
         const vpConfigs = normalize(vehiclePositionsArg);
 
         const [alerts, tripUpdates, vehiclePositions] = await Promise.all([
-             Promise.all(alertConfigs.map(c => this.download(c.url, "Downloading Alerts", false, c.headers))),
-             Promise.all(tuConfigs.map(c => this.download(c.url, "Downloading TripUpdates", false, c.headers))),
-             Promise.all(vpConfigs.map(c => this.download(c.url, "Downloading VehiclePositions", false, c.headers)))
+            Promise.all(alertConfigs.map(c => this.download(c.url, "Downloading Alerts", false, c.headers))),
+            Promise.all(tuConfigs.map(c => this.download(c.url, "Downloading TripUpdates", false, c.headers))),
+            Promise.all(vpConfigs.map(c => this.download(c.url, "Downloading VehiclePositions", false, c.headers)))
         ]);
 
         this.addonInstance.updateRealtime(alerts, tripUpdates, vehiclePositions);

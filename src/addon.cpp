@@ -109,12 +109,14 @@ private:
     Napi::Value GetRealtimeAlerts(const Napi::CallbackInfo& info);
 
 
+    // Helpers
     bool IsServiceActive(const std::string& service_id, const std::string& date_str);
     int GetDayOfWeek(const std::string& date_str);
     std::string GetPreviousDate(const std::string& date_str);
 };
 
 
+// --- Helpers ---
 int GTFSAddon::GetDayOfWeek(const std::string& date_str) {
     if (date_str.length() != 8) return -1;
     try {
@@ -171,15 +173,17 @@ std::string GTFSAddon::GetPreviousDate(const std::string& date_str) {
 }
 
 bool CheckServiceActiveLogic(const gtfs::GTFSData& data, const std::string& service_id, const std::string& date_str, int wday) {
+    // Check calendar_dates.txt for exceptions
     if (data.calendar_dates.count(service_id)) {
         const auto& dates = data.calendar_dates.at(service_id);
         if (dates.count(date_str)) {
             int exception = dates.at(date_str);
-            if (exception == 1) return true; 
-            if (exception == 2) return false; 
+            if (exception == 1) return true; // Service added
+            if (exception == 2) return false; // Service removed
         }
     }
 
+    // Check calendar.txt
     if (data.calendars.count(service_id)) {
         const auto& cal = data.calendars.at(service_id);
         if (date_str < cal.start_date || date_str > cal.end_date) {

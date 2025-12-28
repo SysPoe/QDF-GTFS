@@ -257,13 +257,13 @@ public:
 
     std::unordered_map<std::string, Agency> agencies;
     std::unordered_map<std::string, Calendar> calendars;
-    std::unordered_map<std::string, std::unordered_map<std::string, int>> calendar_dates; 
+    std::unordered_map<std::string, std::unordered_map<std::string, int>> calendar_dates; // service_id -> date -> exception_type
     std::unordered_map<std::string, Route> routes;
     std::unordered_map<std::string, Stop> stops;
     
-    std::vector<StopTime> stop_times; 
+    std::vector<StopTime> stop_times; // Flat list, sorted by trip_id, stop_sequence
 
-    std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_stop_id;
+    std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_stop_id; // index into stop_times
 
     std::unordered_map<std::string, Trip> trips;
     std::vector<Shape> shapes;

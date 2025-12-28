@@ -17,9 +17,11 @@ using LogFn = std::function<void(const std::string&)>;
 using ProgressFn = std::function<void(std::string task, int64_t current, int64_t total)>;
 
 
+// Emit progress roughly every 64KB processed per file
 constexpr size_t PROGRESS_CHUNK_BYTES = 64 * 1024;
 
 
+// Helper to remove UTF-8 BOM if present
 void remove_bom(std::string& line) {
     if (line.size() >= 3 && 
         static_cast<unsigned char>(line[0]) == 0xEF && 
@@ -30,6 +32,7 @@ void remove_bom(std::string& line) {
 }
 
 
+// Helper to convert "HH:MM:SS" to seconds
 int parse_time_seconds(const std::string& time_str) {
     if (time_str.empty()) return -1;
     const char* ptr = time_str.c_str();
@@ -68,6 +71,7 @@ int parse_time_seconds(const std::string& time_str) {
 }
 
 
+// Improved CSV parser
 std::vector<std::string> parse_csv_line(const std::string& line) {
     std::vector<std::string> result;
 
@@ -190,11 +194,12 @@ size_t parse_agency(GTFSData& data, const std::string& content, int merge_strate
         tmp = get_val(row, email_idx);
         if (!tmp.empty()) a.agency_email = tmp;
 
+        // Use agency_id if present, otherwise fall back to agency_name as key
         std::string key = a.agency_id.has_value() ? a.agency_id.value() : a.agency_name;
-        if (!a.agency_id.has_value()) a.agency_id = key; 
+        if (!a.agency_id.has_value()) a.agency_id = key; // ensure a usable id exists
 
-        if (merge_strategy == 1 && data.agencies.count(key)) continue; 
-        if (merge_strategy == 2 && data.agencies.count(key)) throw std::runtime_error("Duplicate agency: " + key); 
+        if (merge_strategy == 1 && data.agencies.count(key)) continue; // IGNORE
+        if (merge_strategy == 2 && data.agencies.count(key)) throw std::runtime_error("Duplicate agency: " + key); // THROW
 
         data.agencies[key] = a;
         count++;
@@ -429,6 +434,7 @@ size_t parse_stops(GTFSData& data, const std::string& content, int merge_strateg
 }
 
 
+// Updated to output to a specific vector, useful for multithreading
 size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t length, const std::vector<std::string>& headers, std::vector<StopTime>& out_vec, const std::function<void(size_t)>& on_progress = nullptr) {
     std::string content(start, length);
     std::stringstream ss(content);

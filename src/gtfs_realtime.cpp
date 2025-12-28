@@ -7,6 +7,8 @@
 
 namespace gtfs {
 
+// --- Helper Functions for Nanopb Decoders ---
+// Decodes a string from a protobuf field
 bool decode_string(pb_istream_t *stream, const pb_field_t *field, void **arg) {
     std::string* str = (std::string*)*arg;
 
@@ -43,6 +45,7 @@ struct AlertContext {
     RealtimeAlert current_alert;
 };
 
+// --- Main Parsing Functions ---
 bool decode_translated_string_content(pb_istream_t *stream, const pb_field_t *field, void **arg) {
     std::string* inner_str = (std::string*)*arg;
     GTFSv2_Realtime_TranslatedString_Translation t = GTFSv2_Realtime_TranslatedString_Translation_init_zero;
@@ -66,6 +69,7 @@ void setup_translated_string_decoding(GTFSv2_Realtime_TranslatedString& ts, std:
 }
 
 
+// --- Main Entry Points ---
 void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, int type) {
     GTFSv2_Realtime_FeedMessage message = GTFSv2_Realtime_FeedMessage_init_zero;
 
