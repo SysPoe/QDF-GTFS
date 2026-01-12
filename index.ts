@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import * as crypto from 'crypto';
 import {
     Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate,
-    RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, GTFSOptions, ProgressInfo,
+    RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
     GTFSMergeStrategy, GTFSFeedConfig
 } from './types.js';
 
@@ -82,6 +82,10 @@ export class GTFS {
     private cache: boolean;
     private mergeStrategy: GTFSMergeStrategy;
     private lastProgressUpdate: number = 0;
+    private serviceDatesCache: Record<string, string[]> | null = null;
+    private serviceDatesSets: Record<string, Set<string>> | null = null;
+    private serviceIdsByDateCache: Record<string, string[]> | null = null;
+    private tripsByServiceIdCache: Record<string, Trip[]> | null = null;
 
     constructor(options?: GTFSOptions) {
         this.addonInstance = new GTFSAddon();
@@ -195,7 +199,14 @@ export class GTFS {
             this.showProgress(task, current, total, speed, eta);
         };
 
-        return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge);
+        return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge)
+            .then((result: void) => {
+                this.serviceDatesCache = null;
+                this.serviceDatesSets = null;
+                this.serviceIdsByDateCache = null;
+                this.tripsByServiceIdCache = null;
+                return result;
+            });
     }
 
     getRoutes(filter?: Partial<Route>): Route[] {
@@ -218,8 +229,149 @@ export class GTFS {
         return this.addonInstance.getFeedInfo();
     }
 
-    getTrips(filter?: Partial<Trip>): Trip[] {
-        return this.addonInstance.getTrips(filter);
+    private getServiceDatesMap(): Record<string, string[]> {
+        if (this.serviceDatesCache && this.serviceDatesSets && this.serviceIdsByDateCache) return this.serviceDatesCache;
+
+        const calendars = this.getCalendars();
+        const calendarDates = this.getCalendarDates();
+        const serviceDates: Record<string, Set<string>> = {};
+
+        for (const calendar of calendars) {
+            const { service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date } =
+                calendar;
+
+            if (!serviceDates[service_id]) serviceDates[service_id] = new Set();
+
+            const sDateStr = String(start_date);
+            const eDateStr = String(end_date);
+            let currentDate = new Date(
+                Date.UTC(
+                    Number(sDateStr.substring(0, 4)),
+                    Number(sDateStr.substring(4, 6)) - 1,
+                    Number(sDateStr.substring(6, 8)),
+                ),
+            );
+            const endDate = new Date(
+                Date.UTC(
+                    Number(eDateStr.substring(0, 4)),
+                    Number(eDateStr.substring(4, 6)) - 1,
+                    Number(eDateStr.substring(6, 8)),
+                ),
+            );
+
+            while (currentDate <= endDate) {
+                const dayOfWeek = currentDate.getUTCDay(); // 0 for Sunday, 1 for Monday, etc.
+                
+                let serviceRuns = false;
+                if (dayOfWeek === 1 && monday) serviceRuns = true;
+                else if (dayOfWeek === 2 && tuesday) serviceRuns = true;
+                else if (dayOfWeek === 3 && wednesday) serviceRuns = true;
+                else if (dayOfWeek === 4 && thursday) serviceRuns = true;
+                else if (dayOfWeek === 5 && friday) serviceRuns = true;
+                else if (dayOfWeek === 6 && saturday) serviceRuns = true;
+                else if (dayOfWeek === 0 && sunday) serviceRuns = true;
+
+                if (serviceRuns) {
+                    const y = currentDate.getUTCFullYear();
+                    const m = currentDate.getUTCMonth() + 1;
+                    const d = currentDate.getUTCDate();
+                    const dateStr = `${y}${m < 10 ? '0' : ''}${m}${d < 10 ? '0' : ''}${d}`;
+                    serviceDates[service_id].add(dateStr);
+                }
+
+                currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+            }
+        }
+
+        for (const calendarDate of calendarDates) {
+            const { service_id, date, exception_type } = calendarDate;
+            if (!date) continue;
+            if (!serviceDates[service_id]) serviceDates[service_id] = new Set();
+
+            if (exception_type === 1) {
+                serviceDates[service_id].add(date);
+            } else if (exception_type === 2) {
+                serviceDates[service_id].delete(date);
+            }
+        }
+
+        const sortedServiceDates: Record<string, string[]> = {};
+        const idsByDate: Record<string, string[]> = {};
+
+        for (const service_id in serviceDates) {
+            const dates = Array.from(serviceDates[service_id]).sort();
+            sortedServiceDates[service_id] = dates;
+            for (const d of dates) {
+                if (!idsByDate[d]) idsByDate[d] = [];
+                idsByDate[d].push(service_id);
+            }
+        }
+
+        this.serviceDatesSets = serviceDates;
+        this.serviceDatesCache = sortedServiceDates;
+        this.serviceIdsByDateCache = idsByDate;
+        return sortedServiceDates;
+    }
+
+    private getTripsByServiceId(): Record<string, Trip[]> {
+        if (this.tripsByServiceIdCache) return this.tripsByServiceIdCache;
+        const allTrips = this.addonInstance.getTrips({});
+        const map: Record<string, Trip[]> = {};
+        for (const trip of allTrips) {
+            if (!map[trip.service_id]) map[trip.service_id] = [];
+            map[trip.service_id].push(trip);
+        }
+        this.tripsByServiceIdCache = map;
+        return map;
+    }
+
+    getTrips(filter?: TripQuery | Partial<Trip>): Trip[] {
+        const filterObj = (filter || {}) as any;
+        const { date, ...otherFilters } = filterObj;
+
+        const otherKeys = Object.keys(otherFilters);
+        const hasStrongFilters = otherFilters.trip_id || otherFilters.route_id || otherFilters.block_id || otherFilters.start_time || otherFilters.end_time;
+
+        if (!date || hasStrongFilters) {
+            const trips = this.addonInstance.getTrips(otherFilters);
+            if (!date) return trips;
+            
+            this.getServiceDatesMap();
+            const sets = this.serviceDatesSets!;
+            return trips.filter((t: Trip) => sets[t.service_id]?.has(date));
+        }
+
+        // Optimized path for "fetch trips by date" (+ optional simple filters like direction_id)
+        this.getServiceDatesMap();
+        const tripsByServiceId = this.getTripsByServiceId();
+        const serviceIdsByDate = this.serviceIdsByDateCache!;
+        
+        const serviceIds = serviceIdsByDate[date] || [];
+        const results: Trip[] = [];
+        
+        for (const sid of serviceIds) {
+            const tripsForService = tripsByServiceId[sid];
+            if (!tripsForService) continue;
+            
+            if (otherKeys.length > 0) {
+                for (let i = 0; i < tripsForService.length; i++) {
+                    const t = tripsForService[i];
+                    let match = true;
+                    for (const key of otherKeys) {
+                        if ((t as any)[key] !== otherFilters[key]) {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match) results.push(t);
+                }
+            } else {
+                for (let i = 0; i < tripsForService.length; i++) {
+                    results.push(tripsForService[i]);
+                }
+            }
+        }
+        return results;
     }
 
     getShapes(filter?: Partial<Shape>): Shape[] {
@@ -232,6 +384,16 @@ export class GTFS {
 
     getCalendarDates(filter?: Partial<CalendarDate>): CalendarDate[] {
         return this.addonInstance.getCalendarDates(filter);
+    }
+
+    getServiceDates(service_id: string): string[] {
+        return this.getServiceDatesMap()[service_id] ?? [];
+    }
+
+    getServiceDatesByTrip(trip_id: string): string[] {
+        const trips = this.getTrips({ trip_id });
+        if (trips.length === 0) return [];
+        return this.getServiceDates(trips[0].service_id);
     }
 
     updateRealtime(alerts: Buffer | Buffer[], tripUpdates: Buffer | Buffer[], vehiclePositions: Buffer | Buffer[]): void {
