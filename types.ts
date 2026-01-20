@@ -380,6 +380,10 @@ export interface GTFSOptions {
     mergeStrategy?: GTFSMergeStrategy;
 }
 
+export interface GTFSActions {
+    mergeStops(targetStopId: string, sourceStopIds: string[]): void;
+}
+
 // Helper fns
 export function formatTimestamp(ts?: number | null): string {
     if (ts === null || ts === undefined) return "--:--";

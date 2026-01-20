@@ -107,6 +107,7 @@ private:
     Napi::Value GetRealtimeTripUpdates(const Napi::CallbackInfo& info);
     Napi::Value GetRealtimeVehiclePositions(const Napi::CallbackInfo& info);
     Napi::Value GetRealtimeAlerts(const Napi::CallbackInfo& info);
+    Napi::Value MergeStops(const Napi::CallbackInfo& info);
 
 
     // Helpers
@@ -218,7 +219,8 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("updateRealtime", &GTFSAddon::UpdateRealtime),
         InstanceMethod("getRealtimeTripUpdates", &GTFSAddon::GetRealtimeTripUpdates),
         InstanceMethod("getRealtimeVehiclePositions", &GTFSAddon::GetRealtimeVehiclePositions),
-        InstanceMethod("getRealtimeAlerts", &GTFSAddon::GetRealtimeAlerts)
+        InstanceMethod("getRealtimeAlerts", &GTFSAddon::GetRealtimeAlerts),
+        InstanceMethod("mergeStops", &GTFSAddon::MergeStops)
     });
 
     Napi::FunctionReference* constructor = new Napi::FunctionReference();
@@ -1098,6 +1100,80 @@ Napi::Value GTFSAddon::GetCalendarDates(const Napi::CallbackInfo& info) {
         arr[i] = obj;
     }
     return arr;
+}
+
+Napi::Value GTFSAddon::MergeStops(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 2 || !info[0].IsString() || !info[1].IsArray()) {
+        Napi::TypeError::New(env, "Expected targetStopId (string) and sourceStopIds (string[])").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::string targetStopId = info[0].As<Napi::String>().Utf8Value();
+    Napi::Array sourceStopsArray = info[1].As<Napi::Array>();
+    
+    std::unordered_set<std::string> sourceStopIds;
+    std::unordered_set<uint32_t> sourceStopInternalIds;
+
+    for (uint32_t i = 0; i < sourceStopsArray.Length(); ++i) {
+        std::string s = sourceStopsArray.Get(i).As<Napi::String>().Utf8Value();
+        if (s == targetStopId) continue;
+        sourceStopIds.insert(s);
+        uint32_t internalId = data.string_pool.get_id(s);
+        if (internalId != 0xFFFFFFFF) {
+            sourceStopInternalIds.insert(internalId);
+        }
+    }
+
+    if (sourceStopIds.empty()) return env.Null();
+
+    uint32_t targetInternalId = data.string_pool.intern(targetStopId);
+
+    // 1. Update stop_times
+    for (auto& st : data.stop_times) {
+        if (sourceStopInternalIds.count(st.stop_id)) {
+            st.stop_id = targetInternalId;
+        }
+    }
+
+    // 2. Rebuild stop_times_by_stop_id
+    auto& targetIndices = data.stop_times_by_stop_id[targetInternalId];
+    for (uint32_t srcId : sourceStopInternalIds) {
+        if (data.stop_times_by_stop_id.count(srcId)) {
+            auto& srcIndices = data.stop_times_by_stop_id.at(srcId);
+            targetIndices.insert(targetIndices.end(), srcIndices.begin(), srcIndices.end());
+            data.stop_times_by_stop_id.erase(srcId);
+        }
+    }
+
+    // 3. Update parent_station references in stops
+    for (auto& [id, stop] : data.stops) {
+        if (stop.parent_station.has_value() && sourceStopIds.count(stop.parent_station.value())) {
+            stop.parent_station = targetStopId;
+        }
+    }
+
+    // 4. Remove source stops from data.stops
+    for (const auto& s : sourceStopIds) {
+        data.stops.erase(s);
+    }
+
+    // 5. Update realtime data
+    for (auto& tu : data.realtime_trip_updates) {
+        for (auto& stu : tu.stop_time_updates) {
+            if (sourceStopIds.count(stu.stop_id)) {
+                stu.stop_id = targetStopId;
+            }
+        }
+    }
+
+    for (auto& vp : data.realtime_vehicle_positions) {
+        if (sourceStopIds.count(vp.stop_id)) {
+            vp.stop_id = targetStopId;
+        }
+    }
+
+    return env.Null();
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {

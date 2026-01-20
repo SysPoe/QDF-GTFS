@@ -1,4 +1,5 @@
 import * as https from 'https';
+import * as http from 'http';
 import * as fs from 'fs';
 import { createRequire } from 'module';
 import * as path from 'path';
@@ -7,7 +8,7 @@ import * as crypto from 'crypto';
 import {
     Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
-    GTFSMergeStrategy, GTFSFeedConfig
+    GTFSMergeStrategy, GTFSFeedConfig, GTFSActions
 } from './types.js';
 
 export * from './types.js';
@@ -86,6 +87,12 @@ export class GTFS {
     private serviceDatesSets: Record<string, Set<string>> | null = null;
     private serviceIdsByDateCache: Record<string, string[]> | null = null;
     private tripsByServiceIdCache: Record<string, Trip[]> | null = null;
+
+    public actions: GTFSActions = {
+        mergeStops: (targetStopId: string, sourceStopIds: string[]) => {
+            this.addonInstance.mergeStops(targetStopId, sourceStopIds);
+        }
+    };
 
     constructor(options?: GTFSOptions) {
         this.addonInstance = new GTFSAddon();
@@ -443,13 +450,14 @@ export class GTFS {
     private download(url: string, taskName: string = "Downloading", showProgressBar: boolean = true, headers?: Record<string, string>): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             const onResponse = (res: any) => {
+                res.on('error', (err: Error) => reject(err));
                 if (res.statusCode !== 200) {
                     if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
                         if (this.logger) this.logger(`Redirected to ${res.headers.location}`);
                         this.download(res.headers.location as string, taskName, showProgressBar, headers).then(resolve).catch(reject);
                         return;
                     }
-                    reject(new Error(`Failed to download: ${res.statusCode}`));
+                    reject(new Error(`Failed to download ${url}: ${res.statusCode}`));
                     return;
                 }
 
@@ -480,15 +488,19 @@ export class GTFS {
                         const speed = elapsed > 0 ? current / elapsed : 0;
                         this.lastProgressUpdate = 0;
                         this.showProgress(taskName, current, total, speed, 0);
-                        if (this.ansi) process.stdout.write('\n');
+                        if (this.ansi && process.stdout.isTTY) process.stdout.write('\n');
                     }
                     resolve(Buffer.concat(data))
                 });
-                res.on('error', (err: Error) => reject(err));
             };
 
-            const req = headers ? https.get(url, { headers }, onResponse) : https.get(url, onResponse);
-            req.on('error', (err: Error) => reject(err));
+            try {
+                const client = url.startsWith('https') ? https : http;
+                const req = headers ? client.get(url, { headers }, onResponse) : client.get(url, onResponse);
+                req.on('error', (err: Error) => reject(err));
+            } catch (e) {
+                reject(e);
+            }
         });
     }
 }
