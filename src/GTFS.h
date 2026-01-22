@@ -66,6 +66,7 @@ struct Agency {
     std::optional<std::string> agency_phone = std::nullopt;
     std::optional<std::string> agency_fare_url = std::nullopt;
     std::optional<std::string> agency_email = std::nullopt;
+    std::string feed_id;
 };
 
 struct Calendar {
@@ -79,12 +80,14 @@ struct Calendar {
     bool sunday;
     std::string start_date;
     std::string end_date;
+    std::string feed_id;
 };
 
 struct CalendarDate {
     std::string service_id;
     std::string date;
     int exception_type;
+    std::string feed_id;
 };
 
 struct Route {
@@ -101,6 +104,7 @@ struct Route {
     std::optional<int> continuous_drop_off = std::nullopt;
     std::optional<int> route_sort_order = std::nullopt;
     std::optional<std::string> network_id = std::nullopt;
+    std::string feed_id;
 };
 
 struct Stop {
@@ -119,6 +123,7 @@ struct Stop {
     std::optional<std::string> level_id = std::nullopt;
     std::optional<std::string> platform_code = std::nullopt;
     std::optional<std::string> tts_stop_name = std::nullopt;
+    std::string feed_id;
 };
 
 struct StopTime {
@@ -134,6 +139,7 @@ struct StopTime {
     std::optional<int> timepoint = std::nullopt;
     std::optional<int> continuous_pickup = std::nullopt;
     std::optional<int> continuous_drop_off = std::nullopt;
+    uint32_t feed_id;
 };
 
 struct Trip {
@@ -147,6 +153,7 @@ struct Trip {
     std::optional<std::string> shape_id = std::nullopt;
     std::optional<int> wheelchair_accessible = std::nullopt;
     std::optional<int> bikes_allowed = std::nullopt;
+    std::string feed_id;
 };
 
 struct Shape {
@@ -155,6 +162,7 @@ struct Shape {
     double shape_pt_lon;
     int shape_pt_sequence;
     std::optional<double> shape_dist_traveled = std::nullopt;
+    std::string feed_id;
 };
 
 struct FeedInfo {
@@ -167,6 +175,7 @@ struct FeedInfo {
     std::optional<std::string> feed_version = std::nullopt;
     std::optional<std::string> feed_contact_email = std::nullopt;
     std::optional<std::string> feed_contact_url = std::nullopt;
+    std::string feed_id;
 };
 
 struct RealtimeTripDescriptor {
@@ -176,6 +185,7 @@ struct RealtimeTripDescriptor {
     std::string start_time;
     std::string start_date;
     int schedule_relationship = 0;
+    std::string feed_id;
 };
 
 struct RealtimeVehicleDescriptor {
@@ -199,6 +209,7 @@ struct RealtimeStopTimeUpdate {
     int departure_uncertainty = -1;
 
     int schedule_relationship = 0;
+    std::string feed_id;
 };
 
 struct RealtimeTripUpdate {
@@ -209,6 +220,7 @@ struct RealtimeTripUpdate {
     std::vector<RealtimeStopTimeUpdate> stop_time_updates;
     uint64_t timestamp = 0;
     int delay = -2147483648;
+    std::string feed_id;
 };
 
 struct RealtimePosition {
@@ -232,6 +244,7 @@ struct RealtimeVehiclePosition {
     int congestion_level = -1;
     int occupancy_status = -1;
     int occupancy_percentage = -1;
+    std::string feed_id;
 };
 
 struct RealtimeAlert {
@@ -245,6 +258,7 @@ struct RealtimeAlert {
     std::string header_text;
     std::string description_text;
     int severity_level = -1;
+    std::string feed_id;
 };
 
 class GTFSData {
@@ -255,17 +269,17 @@ public:
     std::vector<RealtimeVehiclePosition> realtime_vehicle_positions;
     std::vector<RealtimeAlert> realtime_alerts;
 
-    std::unordered_map<std::string, Agency> agencies;
-    std::unordered_map<std::string, Calendar> calendars;
-    std::unordered_map<std::string, std::unordered_map<std::string, int>> calendar_dates; // service_id -> date -> exception_type
-    std::unordered_map<std::string, Route> routes;
-    std::unordered_map<std::string, Stop> stops;
+    std::unordered_map<std::string, std::unordered_map<std::string, Agency>> agencies;
+    std::unordered_map<std::string, std::unordered_map<std::string, Calendar>> calendars;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::unordered_map<std::string, int>>> calendar_dates; // feed_id -> service_id -> date -> exception_type
+    std::unordered_map<std::string, std::unordered_map<std::string, Route>> routes;
+    std::unordered_map<std::string, std::unordered_map<std::string, Stop>> stops;
     
     std::vector<StopTime> stop_times; // Flat list, sorted by trip_id, stop_sequence
 
     std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_stop_id; // index into stop_times
 
-    std::unordered_map<std::string, Trip> trips;
+    std::unordered_map<std::string, std::unordered_map<std::string, Trip>> trips;
     std::vector<Shape> shapes;
     std::vector<FeedInfo> feed_info;
 
