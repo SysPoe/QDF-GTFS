@@ -8,7 +8,8 @@ import * as crypto from 'crypto';
 import {
     Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
-    GTFSMergeStrategy, GTFSFeedConfig, GTFSActions
+    GTFSMergeStrategy, GTFSFeedConfig, GTFSActions,
+    RealtimeFilter
 } from './types.js';
 
 export * from './types.js';
@@ -187,15 +188,16 @@ export class GTFS {
             buffers.push(buffer as Buffer);
         }
 
-        return this.loadFromBuffers(buffers);
+        const feedIds = feedList.map(f => typeof f === 'string' ? '' : (f.feed_id || ''));
+        return this.loadFromBuffers(buffers, feedIds);
     }
 
-    async loadFromPath(paths: string[]): Promise<void> {
+    async loadFromPath(paths: string[], feedIds?: string[]): Promise<void> {
         const buffers = paths.map(p => fs.readFileSync(p));
-        return this.loadFromBuffers(buffers);
+        return this.loadFromBuffers(buffers, feedIds);
     }
 
-    loadFromBuffers(buffers: Buffer[]): Promise<void> {
+    loadFromBuffers(buffers: Buffer[], feedIds?: string[]): Promise<void> {
         const startTime = Date.now();
         const progressBridge = (task: string, current: number, total: number) => {
             const now = Date.now();
@@ -206,7 +208,7 @@ export class GTFS {
             this.showProgress(task, current, total, speed, eta);
         };
 
-        return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge)
+        return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge, feedIds || [])
             .then((result: void) => {
                 this.serviceDatesCache = null;
                 this.serviceDatesSets = null;
@@ -333,52 +335,7 @@ export class GTFS {
     }
 
     getTrips(filter?: TripQuery | Partial<Trip>): Trip[] {
-        const filterObj = (filter || {}) as any;
-        const { date, ...otherFilters } = filterObj;
-
-        const otherKeys = Object.keys(otherFilters);
-        const hasStrongFilters = otherFilters.trip_id || otherFilters.route_id || otherFilters.block_id || otherFilters.start_time || otherFilters.end_time;
-
-        if (!date || hasStrongFilters) {
-            const trips = this.addonInstance.getTrips(otherFilters);
-            if (!date) return trips;
-            
-            this.getServiceDatesMap();
-            const sets = this.serviceDatesSets!;
-            return trips.filter((t: Trip) => sets[t.service_id]?.has(date));
-        }
-
-        // Optimized path for "fetch trips by date" (+ optional simple filters like direction_id)
-        this.getServiceDatesMap();
-        const tripsByServiceId = this.getTripsByServiceId();
-        const serviceIdsByDate = this.serviceIdsByDateCache!;
-        
-        const serviceIds = serviceIdsByDate[date] || [];
-        const results: Trip[] = [];
-        
-        for (const sid of serviceIds) {
-            const tripsForService = tripsByServiceId[sid];
-            if (!tripsForService) continue;
-            
-            if (otherKeys.length > 0) {
-                for (let i = 0; i < tripsForService.length; i++) {
-                    const t = tripsForService[i];
-                    let match = true;
-                    for (const key of otherKeys) {
-                        if ((t as any)[key] !== otherFilters[key]) {
-                            match = false;
-                            break;
-                        }
-                    }
-                    if (match) results.push(t);
-                }
-            } else {
-                for (let i = 0; i < tripsForService.length; i++) {
-                    results.push(tripsForService[i]);
-                }
-            }
-        }
-        return results;
+        return this.addonInstance.getTrips(filter || {});
     }
 
     getShapes(filter?: Partial<Shape>): Shape[] {
@@ -403,8 +360,8 @@ export class GTFS {
         return this.getServiceDates(trips[0].service_id);
     }
 
-    updateRealtime(alerts: Buffer | Buffer[], tripUpdates: Buffer | Buffer[], vehiclePositions: Buffer | Buffer[]): void {
-        this.addonInstance.updateRealtime(alerts, tripUpdates, vehiclePositions);
+    updateRealtime(alerts: Buffer | Buffer[], tripUpdates: Buffer | Buffer[], vehiclePositions: Buffer | Buffer[], feed_id?: string): void {
+        this.addonInstance.updateRealtime(alerts, tripUpdates, vehiclePositions, feed_id || "");
     }
 
     async updateRealtimeFromUrl(
@@ -432,19 +389,25 @@ export class GTFS {
             Promise.all(vpConfigs.map(c => this.download(c.url, "Downloading VehiclePositions", false, c.headers)))
         ]);
 
+        // Note: this doesn't handle multiple feeds with different IDs in a single call easily if we want to associate them.
+        // But for common use cases it's fine or user can call multiple times.
         this.addonInstance.updateRealtime(alerts, tripUpdates, vehiclePositions);
     }
 
-    getRealtimeTripUpdates(): RealtimeTripUpdate[] {
-        return this.addonInstance.getRealtimeTripUpdates();
+    getRealtimeTripUpdates(filter?: RealtimeFilter): RealtimeTripUpdate[] {
+        return this.addonInstance.getRealtimeTripUpdates(filter || {});
     }
 
-    getRealtimeVehiclePositions(): RealtimeVehiclePosition[] {
-        return this.addonInstance.getRealtimeVehiclePositions();
+    getRealtimeVehiclePositions(filter?: RealtimeFilter): RealtimeVehiclePosition[] {
+        return this.addonInstance.getRealtimeVehiclePositions(filter || {});
     }
 
-    getRealtimeAlerts(): RealtimeAlert[] {
-        return this.addonInstance.getRealtimeAlerts();
+    getRealtimeAlerts(filter?: RealtimeFilter): RealtimeAlert[] {
+        return this.addonInstance.getRealtimeAlerts(filter || {});
+    }
+
+    clearRealtime(feed_id?: string): void {
+        this.addonInstance.clearRealtime(feed_id || "");
     }
 
     private download(url: string, taskName: string = "Downloading", showProgressBar: boolean = true, headers?: Record<string, string>): Promise<Buffer> {

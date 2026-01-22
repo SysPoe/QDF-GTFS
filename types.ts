@@ -154,6 +154,7 @@ export enum GTFSMergeStrategy {
 export interface GTFSFeedConfig {
     url: string;
     headers?: Record<string, string>;
+    feed_id?: string;
 }
 
 export interface Agency {
@@ -165,6 +166,7 @@ export interface Agency {
     agency_phone: string | null;
     agency_fare_url: string | null;
     agency_email: string | null;
+    feed_id: string;
 }
 
 export interface Route {
@@ -181,6 +183,7 @@ export interface Route {
     continuous_drop_off: ContinuousDropOff | null;
     route_sort_order: number | null;
     network_id: string | null;
+    feed_id: string;
 }
 
 export interface Stop {
@@ -199,6 +202,7 @@ export interface Stop {
     level_id: string | null;
     platform_code: string | null;
     tts_stop_name?: string | null;
+    feed_id: string;
 }
 
 export interface StopTime {
@@ -214,6 +218,7 @@ export interface StopTime {
     timepoint: number | null;
     continuous_pickup: ContinuousPickup | null;
     continuous_drop_off: ContinuousDropOff | null;
+    feed_id: string;
 }
 
 export interface FeedInfo {
@@ -226,6 +231,7 @@ export interface FeedInfo {
     feed_version: string | null;
     feed_contact_email: string | null;
     feed_contact_url: string | null;
+    feed_id: string;
 }
 
 export interface Trip {
@@ -239,6 +245,7 @@ export interface Trip {
     shape_id: string | null;
     wheelchair_accessible: WheelchairAccessible | null;
     bikes_allowed: BikesAllowed | null;
+    feed_id: string;
 }
 
 export interface Shape {
@@ -247,6 +254,7 @@ export interface Shape {
     shape_pt_lon: number;
     shape_pt_sequence: number;
     shape_dist_traveled: number | null;
+    feed_id: string;
 }
 
 export interface Calendar {
@@ -260,12 +268,14 @@ export interface Calendar {
     sunday: boolean;
     start_date: string;
     end_date: string;
+    feed_id: string;
 }
 
 export interface CalendarDate {
     service_id: string;
     date?: string; // YYYYMMDD
     exception_type: number;
+    feed_id: string;
 }
 
 export interface RealtimeStopTimeUpdate {
@@ -281,6 +291,7 @@ export interface RealtimeStopTimeUpdate {
     departure_time: number | null;
     departure_uncertainty: number | null;
     schedule_relationship: StopTimeScheduleRelationship;
+    feed_id: string;
 }
 
 export interface RealtimeUpdateTripInfo {
@@ -290,6 +301,7 @@ export interface RealtimeUpdateTripInfo {
     start_time: string;
     start_date: string | null;
     schedule_relationship: TripScheduleRelationship;
+    feed_id: string;
 }
 
 export interface RealtimeTripUpdate {
@@ -304,6 +316,15 @@ export interface RealtimeTripUpdate {
     stop_time_updates: RealtimeStopTimeUpdate[];
     timestamp: number | null;
     delay: number | null;
+    feed_id: string;
+}
+
+export interface RealtimeFilter {
+    feed_id?: string;
+    trip_id?: string;
+    route_id?: string;
+    stop_id?: string;
+    vehicle_id?: string;
 }
 
 export interface RealtimeVehiclePosition {
@@ -340,6 +361,7 @@ export interface RealtimeAlert {
     header_text: string;
     description_text: string;
     severity_level: AlertSeverityLevel | null;
+    feed_id: string;
 }
 
 export interface TripQuery {
@@ -351,6 +373,7 @@ export interface TripQuery {
     date?: string; // YYYYMMDD
     start_time?: number | string; // Seconds or HH:MM:SS
     end_time?: number | string; // Seconds or HH:MM:SS
+    feed_id?: string;
 }
 
 export interface StopTimeQuery {
@@ -360,6 +383,7 @@ export interface StopTimeQuery {
     start_time?: number | string; // Seconds or HH:MM:SS
     end_time?: number | string; // Seconds or HH:MM:SS
     dateMode?: "timestamp" | "gtfs_date";
+    feed_id?: string;
 }
 
 export interface ProgressInfo {
