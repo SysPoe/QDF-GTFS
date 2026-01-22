@@ -1,4 +1,4 @@
-#include "GTFS.h"
+    #include "GTFS.h"
 #include "nanopb/pb_decode.h"
 #include "gtfs-realtime.pb.h"
 #include <string>
@@ -31,18 +31,26 @@ struct TranslatedStringContext {
 struct TripUpdateContext {
     GTFSData* data;
     RealtimeTripUpdate current_update;
+    std::string feed_id;
 };
 
 
 struct VehiclePositionContext {
     GTFSData* data;
     RealtimeVehiclePosition current_pos;
+    std::string feed_id;
 };
 
 
 struct AlertContext {
     GTFSData* data;
     RealtimeAlert current_alert;
+    std::string feed_id;
+};
+
+struct RealtimeParseContext {
+    GTFSData* data;
+    std::string feed_id;
 };
 
 // --- Main Parsing Functions ---
@@ -70,22 +78,33 @@ void setup_translated_string_decoding(GTFSv2_Realtime_TranslatedString& ts, std:
 
 
 // --- Main Entry Points ---
-void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, int type) {
+void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, int type, const std::string& feed_id = "") {
     GTFSv2_Realtime_FeedMessage message = GTFSv2_Realtime_FeedMessage_init_zero;
 
     message.entity.funcs.decode = [](pb_istream_t *stream, const pb_field_t *field, void **arg) -> bool {
-        GTFSData* data = (GTFSData*)*arg;
+        RealtimeParseContext* ctx = (RealtimeParseContext*)*arg;
+        GTFSData* data = ctx->data;
+        std::string feed_id = ctx->feed_id;
 
         GTFSv2_Realtime_FeedEntity entity = GTFSv2_Realtime_FeedEntity_init_zero;
 
         TripUpdateContext tu_ctx;
         tu_ctx.data = data;
+        tu_ctx.feed_id = feed_id;
 
         VehiclePositionContext vp_ctx;
         vp_ctx.data = data;
+        vp_ctx.feed_id = feed_id;
 
         AlertContext al_ctx;
         al_ctx.data = data;
+        al_ctx.feed_id = feed_id;
+
+        tu_ctx.current_update.trip.feed_id = feed_id;
+        tu_ctx.current_update.feed_id = feed_id;
+        vp_ctx.current_pos.trip.feed_id = feed_id;
+        vp_ctx.current_pos.feed_id = feed_id; // wait, vp doesn't have it direct? Actually TripDescriptor does.
+        al_ctx.current_alert.feed_id = feed_id;
 
 
         entity.id.funcs.decode = decode_string;
@@ -116,6 +135,7 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         entity.trip_update.stop_time_update.funcs.decode = [](pb_istream_t *stream, const pb_field_t *field, void **arg) -> bool {
             TripUpdateContext* inner_ctx = (TripUpdateContext*)*arg;
             RealtimeStopTimeUpdate stu;
+            stu.feed_id = inner_ctx->feed_id;
             GTFSv2_Realtime_TripUpdate_StopTimeUpdate pb_stu = GTFSv2_Realtime_TripUpdate_StopTimeUpdate_init_zero;
 
             pb_stu.stop_id.funcs.decode = decode_string;
@@ -161,6 +181,7 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
 
             if (pb_stu.has_schedule_relationship) stu.schedule_relationship = pb_stu.schedule_relationship;
             else stu.schedule_relationship = 0;
+            
 
             if (pb_stu.has_stop_sequence) stu.stop_sequence = pb_stu.stop_sequence;
             else stu.stop_sequence = -1;
@@ -288,7 +309,10 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
 
         return true;
     };
-    message.entity.arg = &data;
+    RealtimeParseContext ctx;
+    ctx.data = &data;
+    ctx.feed_id = feed_id;
+    message.entity.arg = &ctx;
 
     pb_istream_t stream = pb_istream_from_buffer(buf, len);
     if (!pb_decode(&stream, GTFSv2_Realtime_FeedMessage_fields, &message)) {
