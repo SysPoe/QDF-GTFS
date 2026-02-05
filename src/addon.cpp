@@ -110,6 +110,8 @@ private:
     Napi::Value UpdateRealtime(const Napi::CallbackInfo& info);
     Napi::Value ClearRealtime(const Napi::CallbackInfo& info);
     Napi::Value MergeStops(const Napi::CallbackInfo& info);
+    Napi::Value UpdateStop(const Napi::CallbackInfo& info);
+
 
 
     // Helpers
@@ -229,8 +231,10 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("getRealtimeAlerts", &GTFSAddon::GetRealtimeAlerts),
         InstanceMethod("updateRealtime", &GTFSAddon::UpdateRealtime),
         InstanceMethod("clearRealtime", &GTFSAddon::ClearRealtime),
-        InstanceMethod("mergeStops", &GTFSAddon::MergeStops)
+        InstanceMethod("mergeStops", &GTFSAddon::MergeStops),
+        InstanceMethod("updateStop", &GTFSAddon::UpdateStop)
     });
+
 
     Napi::FunctionReference* constructor = new Napi::FunctionReference();
     *constructor = Napi::Persistent(func);
@@ -1405,6 +1409,98 @@ Napi::Value GTFSAddon::MergeStops(const Napi::CallbackInfo& info) {
 
     return env.Null();
 }
+
+Napi::Value GTFSAddon::UpdateStop(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 2 || !info[0].IsString() || !info[1].IsObject()) {
+        Napi::TypeError::New(env, "Expected stop_id (string) and partialStop (object)").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::string stop_id = info[0].As<Napi::String>().Utf8Value();
+    Napi::Object partial = info[1].As<Napi::Object>();
+
+    std::string feed_id = "";
+    if (info.Length() > 2 && info[2].IsString()) {
+        feed_id = info[2].As<Napi::String>().Utf8Value();
+    }
+
+    auto update_stop_obj = [&](gtfs::Stop& s) {
+        if (partial.Has("stop_code")) {
+            if (partial.Get("stop_code").IsNull()) s.stop_code = std::nullopt;
+            else s.stop_code = partial.Get("stop_code").As<Napi::String>().Utf8Value();
+        }
+        if (partial.Has("stop_name")) {
+            s.stop_name = partial.Get("stop_name").As<Napi::String>().Utf8Value();
+        }
+        if (partial.Has("stop_desc")) {
+            if (partial.Get("stop_desc").IsNull()) s.stop_desc = std::nullopt;
+            else s.stop_desc = partial.Get("stop_desc").As<Napi::String>().Utf8Value();
+        }
+        if (partial.Has("stop_lat")) {
+            if (partial.Get("stop_lat").IsNull()) s.stop_lat = std::nullopt;
+            else s.stop_lat = partial.Get("stop_lat").As<Napi::Number>().DoubleValue();
+        }
+        if (partial.Has("stop_lon")) {
+            if (partial.Get("stop_lon").IsNull()) s.stop_lon = std::nullopt;
+            else s.stop_lon = partial.Get("stop_lon").As<Napi::Number>().DoubleValue();
+        }
+        if (partial.Has("zone_id")) {
+            if (partial.Get("zone_id").IsNull()) s.zone_id = std::nullopt;
+            else s.zone_id = partial.Get("zone_id").As<Napi::String>().Utf8Value();
+        }
+        if (partial.Has("stop_url")) {
+            if (partial.Get("stop_url").IsNull()) s.stop_url = std::nullopt;
+            else s.stop_url = partial.Get("stop_url").As<Napi::String>().Utf8Value();
+        }
+        if (partial.Has("location_type")) {
+            if (partial.Get("location_type").IsNull()) s.location_type = std::nullopt;
+            else s.location_type = partial.Get("location_type").As<Napi::Number>().Int32Value();
+        }
+        if (partial.Has("parent_station")) {
+            if (partial.Get("parent_station").IsNull()) s.parent_station = std::nullopt;
+            else s.parent_station = partial.Get("parent_station").As<Napi::String>().Utf8Value();
+        }
+        if (partial.Has("stop_timezone")) {
+            if (partial.Get("stop_timezone").IsNull()) s.stop_timezone = std::nullopt;
+            else s.stop_timezone = partial.Get("stop_timezone").As<Napi::String>().Utf8Value();
+        }
+        if (partial.Has("wheelchair_boarding")) {
+            if (partial.Get("wheelchair_boarding").IsNull()) s.wheelchair_boarding = std::nullopt;
+            else s.wheelchair_boarding = partial.Get("wheelchair_boarding").As<Napi::Number>().Int32Value();
+        }
+        if (partial.Has("level_id")) {
+            if (partial.Get("level_id").IsNull()) s.level_id = std::nullopt;
+            else s.level_id = partial.Get("level_id").As<Napi::String>().Utf8Value();
+        }
+        if (partial.Has("platform_code")) {
+            if (partial.Get("platform_code").IsNull()) s.platform_code = std::nullopt;
+            else s.platform_code = partial.Get("platform_code").As<Napi::String>().Utf8Value();
+        }
+        if (partial.Has("tts_stop_name")) {
+            if (partial.Get("tts_stop_name").IsNull()) s.tts_stop_name = std::nullopt;
+            else s.tts_stop_name = partial.Get("tts_stop_name").As<Napi::String>().Utf8Value();
+        }
+    };
+
+    bool found = false;
+    if (!feed_id.empty()) {
+        if (data.stops.count(feed_id) && data.stops.at(feed_id).count(stop_id)) {
+            update_stop_obj(data.stops.at(feed_id).at(stop_id));
+            found = true;
+        }
+    } else {
+        for (auto& [fid, feed_map] : data.stops) {
+            if (feed_map.count(stop_id)) {
+                update_stop_obj(feed_map.at(stop_id));
+                found = true;
+            }
+        }
+    }
+
+    return Napi::Boolean::New(env, found);
+}
+
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
     return GTFSAddon::Init(env, exports);

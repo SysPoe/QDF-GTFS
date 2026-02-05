@@ -406,7 +406,9 @@ export interface GTFSOptions {
 
 export interface GTFSActions {
     mergeStops(targetStopId: string, sourceStopIds: string[]): void;
+    updateStop(stop_id: string, partialStop: Partial<Stop>, feed_id?: string): boolean;
 }
+
 
 // Helper fns
 export function formatTimestamp(ts?: number | null): string {

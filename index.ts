@@ -92,8 +92,12 @@ export class GTFS {
     public actions: GTFSActions = {
         mergeStops: (targetStopId: string, sourceStopIds: string[]) => {
             this.addonInstance.mergeStops(targetStopId, sourceStopIds);
+        },
+        updateStop: (stop_id: string, partialStop: Partial<Stop>, feed_id?: string) => {
+            return this.addonInstance.updateStop(stop_id, partialStop, feed_id || "");
         }
     };
+
 
     constructor(options?: GTFSOptions) {
         this.addonInstance = new GTFSAddon();
