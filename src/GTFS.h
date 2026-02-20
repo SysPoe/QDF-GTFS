@@ -2,6 +2,7 @@
 #define GTFS_H
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <map>
 #include <unordered_map>
@@ -10,12 +11,36 @@
 #include <algorithm>
 #include <shared_mutex>
 #include <mutex>
+#include <utility>
 #include <optional>
+#include <cstddef>
+#include <cstdint>
+#include <climits>
+
 
 namespace gtfs {
 
+// Sentinel constants for StopTime fields
+constexpr int32_t  ST_NO_TIME    = INT32_MIN;
+constexpr uint32_t ST_NO_HEADSIGN = 0xFFFFFFFFu;
+constexpr double   ST_NO_DIST    = -1.0;
+constexpr int8_t   ST_NO_INT8    = -1;
+
+struct BufferView {
+    const unsigned char* data;
+    size_t size;
+};
+
+// Transparent hash for heterogeneous string lookups (C++20)
+struct TransparentStringHash {
+    using is_transparent = void;
+    size_t operator()(std::string_view sv) const noexcept {
+        return std::hash<std::string_view>{}(sv);
+    }
+};
+
 class StringPool {
-    std::unordered_map<std::string, uint32_t> str_to_id;
+    std::unordered_map<std::string, uint32_t, TransparentStringHash, std::equal_to<>> str_to_id;
     std::vector<std::string> id_to_str;
     mutable std::shared_mutex mutex_;
 public:
@@ -25,18 +50,29 @@ public:
         id_to_str.clear();
     }
 
-    uint32_t intern(const std::string& s) {
+    // Heterogeneous intern: avoids allocation if already interned
+    uint32_t intern(std::string_view sv) {
         {
             std::shared_lock<std::shared_mutex> lock(mutex_);
-            if (str_to_id.count(s)) return str_to_id.at(s);
+            auto it = str_to_id.find(sv);
+            if (it != str_to_id.end()) return it->second;
         }
         std::unique_lock<std::shared_mutex> lock(mutex_);
-        if (str_to_id.count(s)) return str_to_id.at(s);
+        auto it = str_to_id.find(sv);
+        if (it != str_to_id.end()) return it->second;
 
         uint32_t id = static_cast<uint32_t>(id_to_str.size());
-        str_to_id[s] = id;
-        id_to_str.push_back(s);
+        str_to_id.emplace(std::string(sv), id);
+        id_to_str.emplace_back(sv);
         return id;
+    }
+
+    uint32_t intern(const char* s, size_t len) {
+        return intern(std::string_view(s, len));
+    }
+
+    uint32_t intern(const std::string& s) {
+        return intern(std::string_view(s));
     }
 
     std::string get(uint32_t id) const {
@@ -44,16 +80,25 @@ public:
         if (id < id_to_str.size()) return id_to_str[id];
         return "";
     }
-    
-    bool exists(const std::string& s) const {
+
+    bool exists(std::string_view sv) const {
         std::shared_lock<std::shared_mutex> lock(mutex_);
-        return str_to_id.count(s);
+        return str_to_id.count(sv) > 0;
     }
-    
-    uint32_t get_id(const std::string& s) const {
+
+    bool exists(const std::string& s) const {
+        return exists(std::string_view(s));
+    }
+
+    uint32_t get_id(std::string_view sv) const {
         std::shared_lock<std::shared_mutex> lock(mutex_);
-        if (str_to_id.count(s)) return str_to_id.at(s);
+        auto it = str_to_id.find(sv);
+        if (it != str_to_id.end()) return it->second;
         return 0xFFFFFFFF;
+    }
+
+    uint32_t get_id(const std::string& s) const {
+        return get_id(std::string_view(s));
     }
 };
 
@@ -126,20 +171,22 @@ struct Stop {
     std::string feed_id;
 };
 
+// Compact StopTime: sentinel values replace std::optional (~48 bytes vs ~88 bytes)
 struct StopTime {
-    uint32_t trip_id;
-    std::optional<int> arrival_time;
-    std::optional<int> departure_time;
-    uint32_t stop_id;
-    int stop_sequence;
-    std::optional<uint32_t> stop_headsign;
-    int pickup_type;
-    int drop_off_type;
-    std::optional<double> shape_dist_traveled = std::nullopt;
-    std::optional<int> timepoint = std::nullopt;
-    std::optional<int> continuous_pickup = std::nullopt;
-    std::optional<int> continuous_drop_off = std::nullopt;
-    uint32_t feed_id;
+    uint32_t trip_id          = 0;
+    int32_t  arrival_time     = ST_NO_TIME;     // sentinel: INT32_MIN
+    int32_t  departure_time   = ST_NO_TIME;     // sentinel: INT32_MIN
+    uint32_t stop_id          = 0;
+    int32_t  stop_sequence    = 0;
+    uint32_t stop_headsign    = ST_NO_HEADSIGN; // sentinel: 0xFFFFFFFF
+    double   shape_dist_traveled = ST_NO_DIST;  // sentinel: -1.0
+    uint32_t feed_id          = 0;
+    int8_t   pickup_type      = 0;
+    int8_t   drop_off_type    = 0;
+    int8_t   timepoint        = ST_NO_INT8;     // sentinel: -1
+    int8_t   continuous_pickup  = ST_NO_INT8;   // sentinel: -1
+    int8_t   continuous_drop_off = ST_NO_INT8;  // sentinel: -1
+    uint8_t  _pad[3]          = {};
 };
 
 struct Trip {
@@ -274,7 +321,7 @@ public:
     std::unordered_map<std::string, std::unordered_map<std::string, std::unordered_map<std::string, int>>> calendar_dates; // feed_id -> service_id -> date -> exception_type
     std::unordered_map<std::string, std::unordered_map<std::string, Route>> routes;
     std::unordered_map<std::string, std::unordered_map<std::string, Stop>> stops;
-    
+
     std::vector<StopTime> stop_times; // Flat list, sorted by trip_id, stop_sequence
 
     std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_stop_id; // index into stop_times
@@ -282,6 +329,9 @@ public:
     std::unordered_map<std::string, std::unordered_map<std::string, Trip>> trips;
     std::vector<Shape> shapes;
     std::vector<FeedInfo> feed_info;
+
+    // O(1) trip lookup by (feed_id_intern << 32 | trip_id_intern)
+    std::unordered_map<uint64_t, const Trip*> trip_by_intern_id;
 
     void clear() {
         string_pool.clear();
@@ -295,6 +345,7 @@ public:
         trips.clear();
         shapes.clear();
         feed_info.clear();
+        trip_by_intern_id.clear();
 
         realtime_trip_updates.clear();
         realtime_vehicle_positions.clear();

@@ -33,6 +33,4 @@ function getAppMemoryUsage() {
 	console.log( `External: ${( usage.external / 1024 / 1024 ).toFixed( 2 )} MB` );
 	console.log( "------------------------------------------" );
 }
-
-
 main();

@@ -17,8 +17,8 @@ struct Logger {
 
 class GTFSWorker : public Napi::AsyncWorker {
 public:
-    GTFSWorker(Napi::Env env, std::vector<std::vector<unsigned char>>&& zipBuffers, std::vector<std::string>&& feedIds, int mergeStrategy, gtfs::GTFSData* targetData, Logger logger)
-        : Napi::AsyncWorker(env, "GTFSWorker"), deferred(Napi::Promise::Deferred::New(env)), zipBuffers(std::move(zipBuffers)), feedIds(std::move(feedIds)), mergeStrategy(mergeStrategy), targetData(targetData), logger(logger) {}
+    GTFSWorker(Napi::Env env, std::vector<gtfs::BufferView>&& zipBuffers, std::vector<Napi::Reference<Napi::Buffer<unsigned char>>>&& bufferRefs, std::vector<std::string>&& feedIds, int mergeStrategy, gtfs::GTFSData* targetData, Logger logger, std::vector<std::string>&& filesToLoad)
+        : Napi::AsyncWorker(env, "GTFSWorker"), deferred(Napi::Promise::Deferred::New(env)), zipBuffers(std::move(zipBuffers)), bufferRefs(std::move(bufferRefs)), feedIds(std::move(feedIds)), mergeStrategy(mergeStrategy), targetData(targetData), logger(logger), filesToLoad(std::move(filesToLoad)) {}
 
     ~GTFSWorker() {
         if (logger.tsfn) {
@@ -27,6 +27,7 @@ public:
         if (logger.progress_tsfn) {
             logger.progress_tsfn.Release();
         }
+        ReleaseBufferRefs();
     }
 
     void Execute() override {
@@ -45,7 +46,7 @@ public:
                     jsCallback.Call({Napi::String::New(env, formattedMsg)});
                 };
                 
-                logger.tsfn.BlockingCall(callback);
+                logger.tsfn.NonBlockingCall(callback);
             };
 
             auto progressCallback = [this](std::string task, int64_t current, int64_t total) {
@@ -58,20 +59,22 @@ public:
                         Napi::Number::New(env, total)
                     });
                 };
-                logger.progress_tsfn.BlockingCall(callback);
+                logger.progress_tsfn.NonBlockingCall(callback);
             };
 
-            gtfs::load_feeds(*targetData, zipBuffers, feedIds, mergeStrategy, logCallback, progressCallback);
+            gtfs::load_feeds(*targetData, zipBuffers, feedIds, mergeStrategy, logCallback, progressCallback, filesToLoad);
         } catch (const std::exception& e) {
             SetError(e.what());
         }
     }
 
     void OnOK() override {
+        ReleaseBufferRefs();
         deferred.Resolve(Env().Null());
     }
 
     void OnError(const Napi::Error& e) override {
+        ReleaseBufferRefs();
         deferred.Reject(e.Value());
     }
     
@@ -79,11 +82,22 @@ public:
 
 private:
     Napi::Promise::Deferred deferred;
-    std::vector<std::vector<unsigned char>> zipBuffers;
+    std::vector<gtfs::BufferView> zipBuffers;
+    std::vector<Napi::Reference<Napi::Buffer<unsigned char>>> bufferRefs;
     std::vector<std::string> feedIds;
     int mergeStrategy;
     gtfs::GTFSData* targetData;
     Logger logger;
+    std::vector<std::string> filesToLoad;
+
+    void ReleaseBufferRefs() {
+        if (bufferRefs.empty()) return;
+        for (auto& ref : bufferRefs) {
+            ref.Unref();
+            ref.Reset();
+        }
+        bufferRefs.clear();
+    }
 };
 
 class GTFSAddon : public Napi::ObjectWrap<GTFSAddon> {
@@ -255,12 +269,17 @@ Napi::Value GTFSAddon::LoadFromBuffers(const Napi::CallbackInfo& info) {
     }
 
     Napi::Array arr = info[0].As<Napi::Array>();
-    std::vector<std::vector<unsigned char>> zipBuffers;
+    std::vector<gtfs::BufferView> zipBuffers;
+    std::vector<Napi::Reference<Napi::Buffer<unsigned char>>> bufferRefs;
+    zipBuffers.reserve(arr.Length());
+    bufferRefs.reserve(arr.Length());
     for (uint32_t i = 0; i < arr.Length(); ++i) {
         Napi::Value val = arr[i];
         if (val.IsBuffer()) {
             Napi::Buffer<unsigned char> buffer = val.As<Napi::Buffer<unsigned char>>();
-            zipBuffers.emplace_back(buffer.Data(), buffer.Data() + buffer.Length());
+            Napi::Reference<Napi::Buffer<unsigned char>> ref = Napi::Persistent(buffer);
+            bufferRefs.push_back(std::move(ref));
+            zipBuffers.push_back({ buffer.Data(), buffer.Length() });
         }
     }
 
@@ -288,7 +307,15 @@ Napi::Value GTFSAddon::LoadFromBuffers(const Napi::CallbackInfo& info) {
         }
     }
 
-    auto worker = new GTFSWorker(env, std::move(zipBuffers), std::move(feedIds), mergeStrategy, &data, logger);
+    std::vector<std::string> filesToLoad;
+    if (info.Length() > 6 && info[6].IsArray()) {
+        Napi::Array flarr = info[6].As<Napi::Array>();
+        for (uint32_t i = 0; i < flarr.Length(); ++i) {
+            filesToLoad.push_back(flarr.Get(i).As<Napi::String>().Utf8Value());
+        }
+    }
+
+    auto worker = new GTFSWorker(env, std::move(zipBuffers), std::move(bufferRefs), std::move(feedIds), mergeStrategy, &data, logger, std::move(filesToLoad));
     worker->Queue();
     return worker->GetPromise();
 }
@@ -930,16 +957,16 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
 
     std::unordered_map<std::string, bool> service_cache;
 
-    auto check_service = [&](const std::string& feed_id_str, const std::string& trip_id_str, const std::string& date_s, int wday) -> bool {
-        if (!data.trips.count(feed_id_str)) return false;
-        const auto& feed_trips = data.trips.at(feed_id_str);
-        if (!feed_trips.count(trip_id_str)) return false;
-        const std::string& service_id = feed_trips.at(trip_id_str).service_id;
-        std::string key = feed_id_str + "|" + service_id + "|" + date_s;
-        if (service_cache.count(key)) return service_cache.at(key);
-
-        bool active = CheckServiceActiveLogic(data, feed_id_str, service_id, date_s, wday);
-        service_cache[key] = active;
+    auto check_service = [&](uint32_t feed_id_int, uint32_t trip_id_int, const std::string& date_s, int wday) -> bool {
+        uint64_t key = (static_cast<uint64_t>(feed_id_int) << 32) | trip_id_int;
+        auto trip_it = data.trip_by_intern_id.find(key);
+        if (trip_it == data.trip_by_intern_id.end()) return false;
+        const gtfs::Trip* trip = trip_it->second;
+        std::string cache_key = trip->feed_id + "|" + trip->service_id + "|" + date_s;
+        auto cache_it = service_cache.find(cache_key);
+        if (cache_it != service_cache.end()) return cache_it->second;
+        bool active = CheckServiceActiveLogic(data, trip->feed_id, trip->service_id, date_s, wday);
+        service_cache[cache_key] = active;
         return active;
     };
 
@@ -952,19 +979,17 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
         bool active_yesterday = false;
 
         if (has_date) {
-            std::string feed_id_str = data.string_pool.get(st.feed_id);
-            std::string trip_id_str = data.string_pool.get(st.trip_id);
-            active_today = check_service(feed_id_str, trip_id_str, filter_date, date_wday);
+            active_today = check_service(st.feed_id, st.trip_id, filter_date, date_wday);
             if (timestamp_mode && !prev_date_str.empty()) {
-                active_yesterday = check_service(feed_id_str, trip_id_str, prev_date_str, prev_date_wday);
+                active_yesterday = check_service(st.feed_id, st.trip_id, prev_date_str, prev_date_wday);
             }
         }
 
         if (active_today) {
             bool match_today = true;
             if (has_time_window) {
-                 bool arrival_in = (st.arrival_time.has_value() && st.arrival_time.value() >= filter_start_time && st.arrival_time.value() <= filter_end_time);
-                 bool departure_in = (st.departure_time.has_value() && st.departure_time.value() >= filter_start_time && st.departure_time.value() <= filter_end_time);
+                 bool arrival_in = (st.arrival_time != gtfs::ST_NO_TIME && st.arrival_time >= filter_start_time && st.arrival_time <= filter_end_time);
+                 bool departure_in = (st.departure_time != gtfs::ST_NO_TIME && st.departure_time >= filter_start_time && st.departure_time <= filter_end_time);
                  if (!arrival_in && !departure_in) match_today = false;
             }
             if (match_today) results.push_back({&st, 0});
@@ -973,8 +998,8 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
         if (active_yesterday) {
             bool match_yesterday = true;
 
-            bool arrival_spill = (st.arrival_time.has_value() && st.arrival_time.value() >= 86400);
-            bool departure_spill = (st.departure_time.has_value() && st.departure_time.value() >= 86400);
+            bool arrival_spill = (st.arrival_time != gtfs::ST_NO_TIME && st.arrival_time >= 86400);
+            bool departure_spill = (st.departure_time != gtfs::ST_NO_TIME && st.departure_time >= 86400);
 
             if (!arrival_spill && !departure_spill) {
                 match_yesterday = false;
@@ -982,8 +1007,8 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
                  int shifted_start = filter_start_time + 86400;
                  int shifted_end = filter_end_time + 86400;
 
-                 bool arrival_in = (st.arrival_time.has_value() && st.arrival_time.value() >= shifted_start && st.arrival_time.value() <= shifted_end);
-                 bool departure_in = (st.departure_time.has_value() && st.departure_time.value() >= shifted_start && st.departure_time.value() <= shifted_end);
+                 bool arrival_in = (st.arrival_time != gtfs::ST_NO_TIME && st.arrival_time >= shifted_start && st.arrival_time <= shifted_end);
+                 bool departure_in = (st.departure_time != gtfs::ST_NO_TIME && st.departure_time >= shifted_start && st.departure_time <= shifted_end);
 
                  if (!arrival_in && !departure_in) match_yesterday = false;
             }
@@ -1025,23 +1050,23 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
 
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("trip_id", data.string_pool.get(st->trip_id));
-        if (st->arrival_time.has_value()) obj.Set("arrival_time", st->arrival_time.value());
+        if (st->arrival_time != gtfs::ST_NO_TIME) obj.Set("arrival_time", st->arrival_time);
         else obj.Set("arrival_time", env.Null());
-        if (st->departure_time.has_value()) obj.Set("departure_time", st->departure_time.value());
+        if (st->departure_time != gtfs::ST_NO_TIME) obj.Set("departure_time", st->departure_time);
         else obj.Set("departure_time", env.Null());
         obj.Set("stop_id", data.string_pool.get(st->stop_id));
         obj.Set("stop_sequence", st->stop_sequence);
-        if (st->stop_headsign.has_value()) obj.Set("stop_headsign", data.string_pool.get(st->stop_headsign.value()));
+        if (st->stop_headsign != gtfs::ST_NO_HEADSIGN) obj.Set("stop_headsign", data.string_pool.get(st->stop_headsign));
         else obj.Set("stop_headsign", env.Null());
-        obj.Set("pickup_type", st->pickup_type);
-        obj.Set("drop_off_type", st->drop_off_type);
-        if (st->shape_dist_traveled.has_value()) obj.Set("shape_dist_traveled", st->shape_dist_traveled.value());
+        obj.Set("pickup_type", (int)st->pickup_type);
+        obj.Set("drop_off_type", (int)st->drop_off_type);
+        if (st->shape_dist_traveled != gtfs::ST_NO_DIST) obj.Set("shape_dist_traveled", st->shape_dist_traveled);
         else obj.Set("shape_dist_traveled", env.Null());
-        if (st->timepoint.has_value()) obj.Set("timepoint", st->timepoint.value());
+        if (st->timepoint != gtfs::ST_NO_INT8) obj.Set("timepoint", (int)st->timepoint);
         else obj.Set("timepoint", env.Null());
-        if (st->continuous_pickup.has_value()) obj.Set("continuous_pickup", st->continuous_pickup.value());
+        if (st->continuous_pickup != gtfs::ST_NO_INT8) obj.Set("continuous_pickup", (int)st->continuous_pickup);
         else obj.Set("continuous_pickup", env.Null());
-        if (st->continuous_drop_off.has_value()) obj.Set("continuous_drop_off", st->continuous_drop_off.value());
+        if (st->continuous_drop_off != gtfs::ST_NO_INT8) obj.Set("continuous_drop_off", (int)st->continuous_drop_off);
         else obj.Set("continuous_drop_off", env.Null());
         obj.Set("feed_id", data.string_pool.get(st->feed_id));
         arr[i] = obj;
@@ -1134,12 +1159,12 @@ Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
 
         if (has_date && date_wday != -1) {
             bool active = false;
-            auto it = service_cache.find(t.service_id);
+            auto it = service_cache.find(t.feed_id + "|" + t.service_id);
             if (it != service_cache.end()) {
                 active = it->second;
             } else {
                 active = CheckServiceActiveLogic(data, t.feed_id, t.service_id, f_date, date_wday);
-                service_cache[t.service_id] = active;
+                service_cache[t.feed_id + "|" + t.service_id] = active;
             }
             if (!active) return false;
         }

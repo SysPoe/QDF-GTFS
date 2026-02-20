@@ -402,6 +402,8 @@ export interface GTFSOptions {
     cacheDir?: string;
     cache?: boolean;
     mergeStrategy?: GTFSMergeStrategy;
+    filesToLoad?: string[];     // e.g. ['agency.txt','routes.txt'] — omit to load all
+    skipStopTimes?: boolean;    // shorthand to skip stop_times.txt
 }
 
 export interface GTFSActions {

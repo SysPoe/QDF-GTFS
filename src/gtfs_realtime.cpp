@@ -13,13 +13,12 @@ bool decode_string(pb_istream_t *stream, const pb_field_t *field, void **arg) {
     std::string* str = (std::string*)*arg;
 
     size_t len = stream->bytes_left;
-    std::vector<char> buffer(len);
-
-    if (!pb_read(stream, (pb_byte_t*)buffer.data(), len)) {
+    str->clear();
+    if (len == 0) return true;
+    str->resize(len);
+    if (!pb_read(stream, (pb_byte_t*)str->data(), len)) {
         return false;
     }
-
-    str->assign(buffer.data(), len);
     return true;
 }
 

@@ -84,6 +84,8 @@ export class GTFS {
     private cache: boolean;
     private mergeStrategy: GTFSMergeStrategy;
     private lastProgressUpdate: number = 0;
+    private filesToLoad?: string[];
+    private skipStopTimes: boolean;
     private serviceDatesCache: Record<string, string[]> | null = null;
     private serviceDatesSets: Record<string, Set<string>> | null = null;
     private serviceIdsByDateCache: Record<string, string[]> | null = null;
@@ -107,6 +109,8 @@ export class GTFS {
         this.cacheDir = options?.cacheDir;
         this.cache = options?.cache || false;
         this.mergeStrategy = options?.mergeStrategy !== undefined ? options.mergeStrategy : GTFSMergeStrategy.OVERWRITE;
+        this.filesToLoad = options?.filesToLoad;
+        this.skipStopTimes = options?.skipStopTimes || false;
     }
 
     private showProgress(task: string, current: number, total: number, speed: number, eta: number) {
@@ -212,7 +216,15 @@ export class GTFS {
             this.showProgress(task, current, total, speed, eta);
         };
 
-        return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge, feedIds || [])
+        const ALL_FILES = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','shapes.txt','feed_info.txt'];
+        let effectiveFiles: string[] = this.filesToLoad ? [...this.filesToLoad] : [];
+        if (this.skipStopTimes && effectiveFiles.length === 0) {
+            effectiveFiles = ALL_FILES.filter(f => f !== 'stop_times.txt');
+        } else if (this.skipStopTimes) {
+            effectiveFiles = effectiveFiles.filter(f => f !== 'stop_times.txt');
+        }
+
+        return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge, feedIds || [], effectiveFiles)
             .then((result: void) => {
                 this.serviceDatesCache = null;
                 this.serviceDatesSets = null;
