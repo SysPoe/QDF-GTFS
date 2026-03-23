@@ -27,12 +27,12 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "node-addon-api": "^8.5.0"
+    "node-addon-api": "^8.5.0",
+    "typescript": "^5.9.3",
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "node-gyp": "^12.1.0",
-    "typescript": "^5.9.3",
     "tsx": "^4.21.0"
   }
 }
