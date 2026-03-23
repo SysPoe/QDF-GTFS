@@ -1,0 +1,1 @@
+cmd_Release/gtfs_addon.node := ln -f "Release/obj.target/gtfs_addon.node" "Release/gtfs_addon.node" 2>/dev/null || (rm -rf "Release/gtfs_addon.node" && cp -af "Release/obj.target/gtfs_addon.node" "Release/gtfs_addon.node")

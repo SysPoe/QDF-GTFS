@@ -1,5 +1,4 @@
 node_modules/
-build/
 *.obj
 *.tlog
 *.log
@@ -8,6 +7,7 @@ build/
 package-lock.json
 test_cache
 cache
-dist
 bun.lock
 
+!dist/
+!build/
