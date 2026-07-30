@@ -13,7 +13,7 @@ A high-performance GTFS (General Transit Feed Specification) and GTFS-Realtime p
 ## Installation
 
 ```bash
-npm install https://github.com/SysPoe/QDF-GTFS
+nub add github:SysPoe/QDF-GTFS
 ```
 
 **Note**: This is a native addon. You will need a build environment compatible with `node-gyp`.
@@ -30,9 +30,9 @@ To successfully install and build this package, your system needs:
     *   **Windows**: Visual Studio Build Tools (MSVC).
 *   **Build Tools**: `make` (Linux/macOS) or appropriate build chain on Windows.
 
-If you encounter errors during `npm install`, ensure you have the necessary build tools installed. On many systems, you can install them via:
+If you encounter errors during `nub install`, ensure you have the necessary build tools installed. On many systems, you can install them via:
 *   **Ubuntu/Debian**: `sudo apt-get install build-essential python3`
-*   **Windows**: `npm install --global --production windows-build-tools` (or install Visual Studio Build Tools manually).
+*   **Windows**: Install Visual Studio Build Tools manually.
 *   **macOS**: `xcode-select --install`
 
 ## Usage

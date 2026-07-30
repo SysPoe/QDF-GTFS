@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <chrono>
 #include <string_view>
+#include <iterator>
 
 namespace gtfs {
 
@@ -865,6 +866,7 @@ size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<
     int lon_idx = get_col_index(headers, "shape_pt_lon");
     int seq_idx = get_col_index(headers, "shape_pt_sequence");
     int dist_idx = get_col_index(headers, "shape_dist_traveled");
+    const uint32_t feed_id_int = data.string_pool.intern(feed_id);
 
     std::unordered_map<std::string, std::vector<Shape>> feed_shapes;
 
@@ -875,16 +877,21 @@ size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<
         if (line_len == 0) { report_progress(bytes_read); continue; }
         std::string line(line_start, line_len);
         auto row = parse_csv_line(line);
+        std::string shape_id = get_val(row, id_idx);
+        auto [shape_it, inserted] = feed_shapes.try_emplace(shape_id);
+
         Shape s;
-        s.feed_id = feed_id;
-        s.shape_id = get_val(row, id_idx);
+        s.feed_id = feed_id_int;
+        s.shape_id = inserted
+            ? data.string_pool.intern(shape_it->first)
+            : shape_it->second.front().shape_id;
         s.shape_pt_lat = get_double(row, lat_idx);
         s.shape_pt_lon = get_double(row, lon_idx);
         s.shape_pt_sequence = get_int(row, seq_idx);
         std::string tmp = get_val(row, dist_idx);
         if (!tmp.empty()) s.shape_dist_traveled = get_double(row, dist_idx);
 
-        feed_shapes[s.shape_id].push_back(s);
+        shape_it->second.push_back(s);
         count++;
         report_progress(bytes_read);
     }
@@ -1201,8 +1208,24 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
 
     if (log) log("All feeds loaded. Finalizing data...");
 
+    size_t total_shapes = 0;
+    for (const auto& [id, vec] : merged_shapes) {
+        total_shapes += vec.size();
+    }
+    data.shapes.reserve(total_shapes);
+    data.shape_ranges_by_id.reserve(merged_shapes.size());
+
     for (auto& [id, vec] : merged_shapes) {
-        data.shapes.insert(data.shapes.end(), vec.begin(), vec.end());
+        const size_t begin = data.shapes.size();
+        const uint32_t shape_id = vec.empty() ? 0xFFFFFFFF : vec.front().shape_id;
+        data.shapes.insert(
+            data.shapes.end(),
+            std::make_move_iterator(vec.begin()),
+            std::make_move_iterator(vec.end())
+        );
+        if (shape_id != 0xFFFFFFFF) {
+            data.shape_ranges_by_id[shape_id] = {begin, data.shapes.size()};
+        }
     }
 
     size_t total_st = 0;

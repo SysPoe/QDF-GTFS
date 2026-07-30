@@ -42,14 +42,14 @@ CFLAGS_CC_Debug := \
 	-std=c++20
 
 INCS_Debug := \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/include/node \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/src \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/deps/openssl/config \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/deps/openssl/openssl/include \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/deps/uv/include \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/deps/zlib \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/deps/v8/include \
-	-I/home/syspoe/projects/QDF-GTFS/node_modules/node-addon-api \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/include/node \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/src \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/deps/openssl/config \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/deps/openssl/openssl/include \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/deps/uv/include \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/deps/zlib \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/deps/v8/include \
+	-I/home/syspoe/.cache/nub/pm/store/node-addon-api@8.9.0-384125d57395f6e1/node_modules/node-addon-api \
 	-I$(srcdir)/src
 
 DEFS_Release := \
@@ -90,14 +90,14 @@ CFLAGS_CC_Release := \
 	-std=c++20
 
 INCS_Release := \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/include/node \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/src \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/deps/openssl/config \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/deps/openssl/openssl/include \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/deps/uv/include \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/deps/zlib \
-	-I/home/syspoe/.cache/node-gyp/24.3.0/deps/v8/include \
-	-I/home/syspoe/projects/QDF-GTFS/node_modules/node-addon-api \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/include/node \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/src \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/deps/openssl/config \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/deps/openssl/openssl/include \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/deps/uv/include \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/deps/zlib \
+	-I/home/syspoe/.cache/node-gyp/24.18.0/deps/v8/include \
+	-I/home/syspoe/.cache/nub/pm/store/node-addon-api@8.9.0-384125d57395f6e1/node_modules/node-addon-api \
 	-I$(srcdir)/src
 
 OBJS := \

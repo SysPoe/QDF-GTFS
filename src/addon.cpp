@@ -7,6 +7,7 @@
 #include <vector>
 #include <functional>
 #include <iomanip>
+#include <cmath>
 
 
 struct Logger {
@@ -1224,28 +1225,42 @@ Napi::Value GTFSAddon::GetShapes(const Napi::CallbackInfo& info) {
         has_filter = true;
     }
 
-    Napi::Array arr = Napi::Array::New(env);
+    const bool has_shape_id = has_filter && filter.Has("shape_id");
+    const bool has_feed_id = has_filter && filter.Has("feed_id");
+    uint32_t shape_id = 0xFFFFFFFF;
+    uint32_t feed_id = 0xFFFFFFFF;
 
+    if (has_shape_id) {
+        shape_id = data.string_pool.get_id(filter.Get("shape_id").As<Napi::String>().Utf8Value());
+        if (shape_id == 0xFFFFFFFF) return Napi::Array::New(env);
+    }
+    if (has_feed_id) {
+        feed_id = data.string_pool.get_id(filter.Get("feed_id").As<Napi::String>().Utf8Value());
+        if (feed_id == 0xFFFFFFFF) return Napi::Array::New(env);
+    }
+
+    size_t begin = 0;
+    size_t end = data.shapes.size();
+    if (has_shape_id) {
+        auto range = data.shape_ranges_by_id.find(shape_id);
+        if (range == data.shape_ranges_by_id.end()) return Napi::Array::New(env);
+        begin = range->second.first;
+        end = range->second.second;
+    }
+
+    Napi::Array arr = Napi::Array::New(env);
     size_t count = 0;
-    for (size_t i = 0; i < data.shapes.size(); ++i) {
-        if (has_filter) {
-             if (filter.Has("shape_id")) {
-                  std::string v = filter.Get("shape_id").As<Napi::String>().Utf8Value();
-                  if (data.shapes[i].shape_id != v) continue;
-             }
-             if (filter.Has("feed_id")) {
-                  std::string v = filter.Get("feed_id").As<Napi::String>().Utf8Value();
-                  if (data.shapes[i].feed_id != v) continue;
-             }
-        }
+    for (size_t i = begin; i < end; ++i) {
+        const auto& shape = data.shapes[i];
+        if (has_feed_id && shape.feed_id != feed_id) continue;
 
         Napi::Object obj = Napi::Object::New(env);
-        obj.Set("shape_id", data.shapes[i].shape_id);
-        obj.Set("shape_pt_lat", data.shapes[i].shape_pt_lat);
-        obj.Set("shape_pt_lon", data.shapes[i].shape_pt_lon);
-        obj.Set("shape_pt_sequence", data.shapes[i].shape_pt_sequence);
-        if (data.shapes[i].shape_dist_traveled.has_value()) obj.Set("shape_dist_traveled", data.shapes[i].shape_dist_traveled.value()); else obj.Set("shape_dist_traveled", env.Null());
-        obj.Set("feed_id", data.shapes[i].feed_id);
+        obj.Set("shape_id", data.string_pool.get_ref(shape.shape_id));
+        obj.Set("shape_pt_lat", shape.shape_pt_lat);
+        obj.Set("shape_pt_lon", shape.shape_pt_lon);
+        obj.Set("shape_pt_sequence", shape.shape_pt_sequence);
+        if (!std::isnan(shape.shape_dist_traveled)) obj.Set("shape_dist_traveled", shape.shape_dist_traveled); else obj.Set("shape_dist_traveled", env.Null());
+        obj.Set("feed_id", data.string_pool.get_ref(shape.feed_id));
         arr[count++] = obj;
     }
     return arr;

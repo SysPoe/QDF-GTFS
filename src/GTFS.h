@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <climits>
+#include <limits>
 
 
 namespace gtfs {
@@ -25,6 +26,7 @@ constexpr int32_t  ST_NO_TIME    = INT32_MIN;
 constexpr uint32_t ST_NO_HEADSIGN = 0xFFFFFFFFu;
 constexpr double   ST_NO_DIST    = -1.0;
 constexpr int8_t   ST_NO_INT8    = -1;
+constexpr double   SHAPE_NO_DIST = std::numeric_limits<double>::quiet_NaN();
 
 struct BufferView {
     const unsigned char* data;
@@ -79,6 +81,14 @@ public:
         std::shared_lock<std::shared_mutex> lock(mutex_);
         if (id < id_to_str.size()) return id_to_str[id];
         return "";
+    }
+
+    // GTFS query methods are synchronous and run only after loading completes.
+    // This avoids allocating a temporary std::string for every returned row.
+    const std::string& get_ref(uint32_t id) const {
+        static const std::string empty;
+        if (id < id_to_str.size()) return id_to_str[id];
+        return empty;
     }
 
     bool exists(std::string_view sv) const {
@@ -204,13 +214,15 @@ struct Trip {
 };
 
 struct Shape {
-    std::string shape_id;
     double shape_pt_lat;
     double shape_pt_lon;
-    int shape_pt_sequence;
-    std::optional<double> shape_dist_traveled = std::nullopt;
-    std::string feed_id;
+    double shape_dist_traveled = SHAPE_NO_DIST;
+    uint32_t shape_id;
+    uint32_t feed_id;
+    int32_t shape_pt_sequence;
 };
+
+static_assert(sizeof(Shape) <= 40, "Shape storage must remain compact");
 
 struct FeedInfo {
     std::string feed_publisher_name;
@@ -328,6 +340,9 @@ public:
 
     std::unordered_map<std::string, std::unordered_map<std::string, Trip>> trips;
     std::vector<Shape> shapes;
+    // Shapes belonging to one shape_id are contiguous after finalization.
+    // The pair contains [begin, end) offsets into shapes.
+    std::unordered_map<uint32_t, std::pair<size_t, size_t>> shape_ranges_by_id;
     std::vector<FeedInfo> feed_info;
 
     // O(1) trip lookup by (feed_id_intern << 32 | trip_id_intern)
@@ -344,6 +359,7 @@ public:
         stop_times_by_stop_id.clear();
         trips.clear();
         shapes.clear();
+        shape_ranges_by_id.clear();
         feed_info.clear();
         trip_by_intern_id.clear();
 
