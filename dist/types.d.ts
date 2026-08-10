@@ -134,6 +134,15 @@ export interface GTFSFeedConfig {
     url: string;
     headers?: Record<string, string>;
 }
+export interface GTFSStaticLoadResult {
+    id: string;
+    source: "network" | "fresh-cache" | "stale-cache";
+}
+export interface GTFSRealtimeLoadResult {
+    id: string;
+    ok: boolean;
+    error?: string;
+}
 /** A collision-safe reference to an entity inside one static GTFS dataset. */
 export interface QualifiedEntityId {
     feedId: string;
@@ -380,6 +389,12 @@ export interface GTFSOptions {
     ansi?: boolean;
     cacheDir?: string;
     cache?: boolean;
+    /** Maximum age of a static feed before revalidation. Defaults to 24 hours. */
+    cacheMaxAgeMs?: number;
+    /** Continue with an expired static cache when its source is unavailable. Defaults to true. */
+    staleIfError?: boolean;
+    /** Network request timeout. Defaults to 30 seconds. */
+    requestTimeoutMs?: number;
     mergeStrategy?: GTFSMergeStrategy;
     filesToLoad?: string[];
     skipStopTimes?: boolean;

@@ -1,4 +1,4 @@
-import { Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSActions, QualifiedEntityId, RealtimeFilter } from './types.js';
+import { Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSActions, QualifiedEntityId, RealtimeFilter } from './types.js';
 export * from './types.js';
 export declare class GTFS {
     private addonInstance;
@@ -11,6 +11,9 @@ export declare class GTFS {
     private lastProgressUpdate;
     private filesToLoad?;
     private skipStopTimes;
+    private cacheMaxAgeMs;
+    private staleIfError;
+    private requestTimeoutMs;
     private serviceDatesCache;
     private serviceDatesSets;
     private serviceIdsByDateCache;
@@ -18,9 +21,9 @@ export declare class GTFS {
     actions: GTFSActions;
     constructor(options?: GTFSOptions);
     private showProgress;
-    loadStatic(feeds: GTFSFeedConfig[] | GTFSFeedConfig): Promise<void>;
-    loadFromPath(paths: string[], feedIds?: string[]): Promise<void>;
-    loadFromBuffers(buffers: Buffer[], feedIds?: string[]): Promise<void>;
+    loadStatic(feeds: GTFSFeedConfig[] | GTFSFeedConfig): Promise<GTFSStaticLoadResult[]>;
+    loadFromPath(paths: string[], feedIds: string[]): Promise<void>;
+    loadFromBuffers(buffers: Buffer[], feedIds: string[]): Promise<void>;
     getRoutes(filter?: Partial<Route>): Route[];
     getAgencies(filter?: Partial<Agency>): Agency[];
     getStops(filter?: Partial<Stop>): Stop[];
@@ -41,7 +44,7 @@ export declare class GTFS {
         targetFeedId: string;
         sourceId: string;
     }): void;
-    updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[]): Promise<void>;
+    updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[]): Promise<GTFSRealtimeLoadResult[]>;
     getRealtimeTripUpdates(filter?: RealtimeFilter): RealtimeTripUpdate[];
     getRealtimeVehiclePositions(filter?: RealtimeFilter): RealtimeVehiclePosition[];
     getRealtimeAlerts(filter?: RealtimeFilter): RealtimeAlert[];

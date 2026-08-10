@@ -1249,9 +1249,10 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
             return a.stop_sequence < b.stop_sequence;
         });
 
-    if (log) log("Indexing stop times by stop_id...");
+    if (log) log("Indexing stop times by stop_id and trip_id...");
     for (size_t i = 0; i < data.stop_times.size(); ++i) {
         data.stop_times_by_stop_id[data.stop_times[i].stop_id].push_back(i);
+        data.stop_times_by_trip_id[data.stop_times[i].trip_id].push_back(i);
     }
 
     // Build O(1) trip lookup index: key = (feed_id_intern << 32) | trip_id_intern

@@ -53,15 +53,17 @@ const gtfs = new GTFS({
 You can load a GTFS feed from a URL or a local file path.
 
 ```typescript
-// Load from URL
-// (simple string form)
-await gtfs.loadFromUrl("https://example.com/gtfs.zip");
+// Feed IDs are required and remain attached to every parsed entity.
+await gtfs.loadStatic({ id: "my-agency", url: "https://example.com/gtfs.zip" });
 
-// (object form with headers)
-await gtfs.loadFromUrl({ url: "https://example.com/gtfs.zip", headers: { Authorization: "Bearer ..." } });
+// Multiple feeds remain distinct even when they reuse local IDs.
+await gtfs.loadStatic([
+  { id: "agency-a", url: "https://example.com/a.zip" },
+  { id: "agency-b", url: "https://example.com/b.zip", headers: { Authorization: "Bearer ..." } }
+]);
 
 // OR Load from local path
-// await gtfs.loadFromPath("./path/to/gtfs.zip");
+// await gtfs.loadFromPath(["./path/to/gtfs.zip"], ["my-agency"]);
 
 // Access data
 const routes = gtfs.getRoutes();
@@ -75,19 +77,11 @@ console.log(`Loaded ${routes.length} routes and ${stops.length} stops.`);
 Fetch and parse realtime updates (Protocol Buffers).
 
 ```typescript
-// Using simple string form
-await gtfs.updateRealtimeFromUrl(
-  "https://example.com/alerts.pb",
-  "https://example.com/trip_updates.pb",
-  "https://example.com/vehicle_positions.pb"
-);
-
-// Or passing objects (with headers)
-await gtfs.updateRealtimeFromUrl(
-  { url: "https://example.com/alerts.pb", headers: { Authorization: "Bearer ..." } },
-  { url: "https://example.com/trip_updates.pb" },
-  { url: "https://example.com/vehicle_positions.pb" }
-);
+await gtfs.updateRealtimeFromUrl([
+  { id: "agency-a-alerts", targetFeedId: "agency-a", kind: "alerts", url: "https://example.com/alerts.pb" },
+  { id: "agency-a-trips", targetFeedId: "agency-a", kind: "trip-updates", url: "https://example.com/trip_updates.pb" },
+  { id: "agency-a-vehicles", targetFeedId: "agency-a", kind: "vehicles", url: "https://example.com/vehicle_positions.pb" }
+]);
 
 // Access parsed realtime data
 const tripUpdates = gtfs.getRealtimeTripUpdates();
@@ -104,13 +98,16 @@ const alerts = gtfs.getRealtimeAlerts();
 - `progress`: Function. Callback for detailed progress info.
 - `cache`: Boolean. Enable caching (default: `false`).
 - `cacheDir`: String. Directory for cache.
+- `cacheMaxAgeMs`: Maximum age for a fresh static-feed cache (default: 24 hours).
+- `staleIfError`: Use an expired static cache when its origin is unavailable (default: `true`).
+- `requestTimeoutMs`: Network request timeout (default: 30 seconds).
 
 ### Main Methods
 
-- `loadFromUrl(url)`: Download and load GTFS ZIP.
-- `loadFromPath(path)`: Load GTFS ZIP from local filesystem.
-- `updateRealtimeFromUrl(alerts?, tripUpdates?, vehiclePositions?)`: Download and parse realtime feeds.
-- `updateRealtime(alerts, tripUpdates, vehiclePositions)`: Parse raw Buffers directly.
+- `loadStatic(feeds)`: Download, cache, and load one or more feed-qualified GTFS ZIPs.
+- `loadFromPath(paths, feedIds)`: Load one or more GTFS ZIPs from the local filesystem. Supply one unique, non-empty feed ID per ZIP.
+- `updateRealtimeFromUrl(sources)`: Download and independently update feed-qualified realtime sources.
+- `updateRealtime(input)`: Parse a raw realtime Buffer with explicit `sourceId`, `targetFeedId`, and `kind`.
 
 ### Data Getters
 

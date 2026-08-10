@@ -8,7 +8,7 @@ import * as crypto from 'crypto';
 import {
     Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
-    GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSActions, QualifiedEntityId,
+    GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSActions, QualifiedEntityId,
     RealtimeFilter
 } from './types.js';
 
@@ -86,6 +86,9 @@ export class GTFS {
     private lastProgressUpdate: number = 0;
     private filesToLoad?: string[];
     private skipStopTimes: boolean;
+	private cacheMaxAgeMs: number;
+	private staleIfError: boolean;
+	private requestTimeoutMs: number;
     private serviceDatesCache: Map<string, string[]> | null = null;
     private serviceDatesSets: Map<string, Set<string>> | null = null;
     private serviceIdsByDateCache: Map<string, QualifiedEntityId[]> | null = null;
@@ -111,6 +114,9 @@ export class GTFS {
         this.mergeStrategy = options?.mergeStrategy !== undefined ? options.mergeStrategy : GTFSMergeStrategy.OVERWRITE;
         this.filesToLoad = options?.filesToLoad;
         this.skipStopTimes = options?.skipStopTimes || false;
+		this.cacheMaxAgeMs = options?.cacheMaxAgeMs ?? 24 * 60 * 60 * 1000;
+		this.staleIfError = options?.staleIfError ?? true;
+		this.requestTimeoutMs = options?.requestTimeoutMs ?? 30_000;
     }
 
     private showProgress(task: string, current: number, total: number, speed: number, eta: number) {
@@ -143,12 +149,19 @@ export class GTFS {
         }
     }
 
-    async loadStatic(feeds: GTFSFeedConfig[] | GTFSFeedConfig): Promise<void> {
+    async loadStatic(feeds: GTFSFeedConfig[] | GTFSFeedConfig): Promise<GTFSStaticLoadResult[]> {
         const feedList = Array.isArray(feeds) ? feeds : [feeds];
+		if (feedList.length === 0) throw new Error('At least one GTFS feed is required');
+		if (feedList.some((feed) => !feed.id?.trim())) throw new Error('GTFS feed IDs must be non-empty');
+		if (new Set(feedList.map((feed) => feed.id)).size !== feedList.length) throw new Error('GTFS feed IDs must be unique');
         const buffers: Buffer[] = [];
+		const results: GTFSStaticLoadResult[] = [];
+		const pendingCacheWrites: { cacheDir: string; cachePath: string; buffer: Buffer }[] = [];
 
         for (const config of feedList) {
             let buffer: Buffer | null = null;
+			let staleBuffer: Buffer | null = null;
+			let loadedFrom: GTFSStaticLoadResult["source"] = "network";
             const cacheDir = this.cacheDir || './cache';
             let cachePath = '';
 
@@ -160,15 +173,16 @@ export class GTFS {
                 if (fs.existsSync(cachePath)) {
                     const stats = fs.statSync(cachePath);
                     const age = Date.now() - stats.mtimeMs;
-                    const oneDay = 24 * 60 * 60 * 1000;
+                    try {
+						staleBuffer = fs.readFileSync(cachePath);
+					} catch (e) {
+						if (this.logger) this.logger(`Failed to read cache: ${e}`);
+					}
 
-                    if (age < oneDay) {
+                    if (age < this.cacheMaxAgeMs && staleBuffer) {
                         if (this.logger) this.logger(`Loading from cache: ${cachePath}`);
-                        try {
-                            buffer = fs.readFileSync(cachePath);
-                        } catch (e) {
-                            if (this.logger) this.logger(`Failed to read cache: ${e}`);
-                        }
+						buffer = staleBuffer;
+						loadedFrom = "fresh-cache";
                     } else {
                         if (this.logger) this.logger(`Cache expired for ${config.url}, redownloading...`);
                     }
@@ -183,28 +197,52 @@ export class GTFS {
                         this.logger(`Downloading ${config.url}...`);
                     }
                 }
-                buffer = await this.download(config.url, "Downloading", true, config.headers);
+				try {
+					buffer = await this.download(config.url, "Downloading", true, config.headers);
+					loadedFrom = "network";
+				} catch (error) {
+					if (!this.staleIfError || !staleBuffer) throw error;
+					buffer = staleBuffer;
+					loadedFrom = "stale-cache";
+					if (this.logger) this.logger(`Using stale cache for ${config.url}: ${error instanceof Error ? error.message : String(error)}`);
+				}
 
-                if (this.cache && cachePath) {
-                    if (!fs.existsSync(cacheDir)) {
-                        fs.mkdirSync(cacheDir, { recursive: true });
-                    }
-                    fs.writeFileSync(cachePath, buffer);
+				if (loadedFrom === "network" && this.cache && cachePath) {
+					pendingCacheWrites.push({ cacheDir, cachePath, buffer });
                 }
             }
             buffers.push(buffer as Buffer);
+			results.push({ id: config.id, source: loadedFrom });
         }
 
         const feedIds = feedList.map((feed) => feed.id);
-        return this.loadFromBuffers(buffers, feedIds);
+		await this.loadFromBuffers(buffers, feedIds);
+		// Only replace durable caches after every downloaded ZIP parsed successfully.
+		for (const { cacheDir, cachePath, buffer } of pendingCacheWrites) {
+			if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+			const temporaryPath = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
+			try {
+				fs.writeFileSync(temporaryPath, buffer);
+				fs.renameSync(temporaryPath, cachePath);
+			} finally {
+				if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+			}
+		}
+		return results;
     }
 
-    async loadFromPath(paths: string[], feedIds?: string[]): Promise<void> {
+    async loadFromPath(paths: string[], feedIds: string[]): Promise<void> {
         const buffers = paths.map(p => fs.readFileSync(p));
         return this.loadFromBuffers(buffers, feedIds);
     }
 
-    loadFromBuffers(buffers: Buffer[], feedIds?: string[]): Promise<void> {
+    loadFromBuffers(buffers: Buffer[], feedIds: string[]): Promise<void> {
+        if (buffers.length === 0) throw new Error('At least one GTFS buffer is required');
+        if (feedIds.length !== buffers.length) {
+            throw new Error(`Expected one feed ID per GTFS buffer; received ${feedIds.length} IDs for ${buffers.length} buffers`);
+        }
+        if (feedIds.some((feedId) => !feedId.trim())) throw new Error('GTFS feed IDs must be non-empty');
+        if (new Set(feedIds).size !== feedIds.length) throw new Error('GTFS feed IDs must be unique');
         const startTime = Date.now();
         const progressBridge = (task: string, current: number, total: number) => {
             const now = Date.now();
@@ -223,7 +261,7 @@ export class GTFS {
             effectiveFiles = effectiveFiles.filter(f => f !== 'stop_times.txt');
         }
 
-        return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge, feedIds || [], effectiveFiles)
+        return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge, feedIds, effectiveFiles)
             .then((result: void) => {
                 this.serviceDatesCache = null;
                 this.serviceDatesSets = null;
@@ -410,16 +448,16 @@ export class GTFS {
         );
     }
 
-    async updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[]): Promise<void> {
-        await Promise.all(sources.map(async (source) => {
-            const data = await this.download(source.url, `Downloading ${source.kind}`, false, source.headers);
-            this.updateRealtime({
-                kind: source.kind,
-                data,
-                targetFeedId: source.targetFeedId,
-                sourceId: source.id,
-            });
-        }));
+    async updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[]): Promise<GTFSRealtimeLoadResult[]> {
+		return Promise.all(sources.map(async (source) => {
+			try {
+				const data = await this.download(source.url, `Downloading ${source.kind}`, false, source.headers);
+				this.updateRealtime({ kind: source.kind, data, targetFeedId: source.targetFeedId, sourceId: source.id });
+				return { id: source.id, ok: true };
+			} catch (error) {
+				return { id: source.id, ok: false, error: error instanceof Error ? error.message : String(error) };
+			}
+		}));
     }
 
     getRealtimeTripUpdates(filter?: RealtimeFilter): RealtimeTripUpdate[] {
@@ -438,16 +476,19 @@ export class GTFS {
         this.addonInstance.clearRealtime(filter.targetFeedId || "", filter.sourceId || "");
     }
 
-    private download(url: string, taskName: string = "Downloading", showProgressBar: boolean = true, headers?: Record<string, string>): Promise<Buffer> {
+    private download(url: string, taskName: string = "Downloading", showProgressBar: boolean = true, headers?: Record<string, string>, redirects: number = 0): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             const onResponse = (res: any) => {
                 res.on('error', (err: Error) => reject(err));
                 if (res.statusCode !== 200) {
-                    if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
+					if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+						if (redirects >= 5) { reject(new Error(`Too many redirects downloading ${url}`)); return; }
                         if (this.logger) this.logger(`Redirected to ${res.headers.location}`);
-                        this.download(res.headers.location as string, taskName, showProgressBar, headers).then(resolve).catch(reject);
+						res.resume();
+						this.download(new URL(res.headers.location as string, url).toString(), taskName, showProgressBar, headers, redirects + 1).then(resolve).catch(reject);
                         return;
                     }
+					res.resume();
                     reject(new Error(`Failed to download ${url}: ${res.statusCode}`));
                     return;
                 }
@@ -489,6 +530,7 @@ export class GTFS {
                 const client = url.startsWith('https') ? https : http;
                 const req = headers ? client.get(url, { headers }, onResponse) : client.get(url, onResponse);
                 req.on('error', (err: Error) => reject(err));
+				req.setTimeout(this.requestTimeoutMs, () => req.destroy(new Error(`Timed out downloading ${url}`)));
             } catch (e) {
                 reject(e);
             }

@@ -1051,17 +1051,11 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
     };
 
     if (has_trip_id) {
-        gtfs::StopTime target;
-        target.trip_id = filter_trip_id;
-        
-        auto range = std::equal_range(data.stop_times.begin(), data.stop_times.end(), target, 
-            [](const gtfs::StopTime& a, const gtfs::StopTime& b) {
-                return a.trip_id < b.trip_id;
+        auto trip_it = data.stop_times_by_trip_id.find(filter_trip_id);
+        if (trip_it != data.stop_times_by_trip_id.end()) {
+            for (size_t idx : trip_it->second) {
+                check_inclusion(data.stop_times[idx]);
             }
-        );
-
-        for (auto it = range.first; it != range.second; ++it) {
-            check_inclusion(*it);
         }
 
     } else if (has_stop_id) {
@@ -1446,8 +1440,10 @@ Napi::Value GTFSAddon::MergeStops(const Napi::CallbackInfo& info) {
 
     // 2. Rebuild the bare stop index because another feed may use the same IDs.
     data.stop_times_by_stop_id.clear();
+    data.stop_times_by_trip_id.clear();
     for (size_t index = 0; index < data.stop_times.size(); ++index) {
         data.stop_times_by_stop_id[data.stop_times[index].stop_id].push_back(index);
+        data.stop_times_by_trip_id[data.stop_times[index].trip_id].push_back(index);
     }
 
     // 3. Update parent_station references in stops

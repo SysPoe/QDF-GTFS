@@ -341,6 +341,9 @@ public:
     std::vector<StopTime> stop_times; // Flat list, sorted by trip_id, stop_sequence
 
     std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_stop_id; // index into stop_times
+    // A trip_id may legitimately occur in more than one feed. Keep every
+    // matching row here and apply feed filters while reading the index.
+    std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_trip_id; // index into stop_times
 
     std::unordered_map<std::string, std::unordered_map<std::string, Trip>> trips;
     std::vector<Shape> shapes;
@@ -361,6 +364,7 @@ public:
         stops.clear();
         stop_times.clear();
         stop_times_by_stop_id.clear();
+        stop_times_by_trip_id.clear();
         trips.clear();
         shapes.clear();
         shape_ranges_by_id.clear();

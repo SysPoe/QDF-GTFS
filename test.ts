@@ -260,6 +260,41 @@ async function testQualifiedIdentityAndRealtimeProvenance() {
 	);
 }
 
+async function testTripStopTimeIndexAcrossFeeds() {
+	const header = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n";
+	const first = createZip({
+		"stop_times.txt":
+			header +
+			"reused-trip,10:00:00,10:00:00,first-a,1\n" +
+			"other-trip,11:00:00,11:00:00,first-b,1\n",
+	});
+	const second = createZip({
+		"stop_times.txt": header + "reused-trip,12:00:00,12:00:00,second-a,1\n",
+	});
+	const gtfs = new GTFS({ filesToLoad: ["stop_times.txt"] });
+	await gtfs.loadFromBuffers([first, second], ["feed-a", "feed-b"]);
+
+	assert.deepEqual(
+		gtfs.getStopTimes({ trip_id: "reused-trip" }).map(({ feed_id, stop_id }) => ({ feed_id, stop_id })),
+		[
+			{ feed_id: "feed-a", stop_id: "first-a" },
+			{ feed_id: "feed-b", stop_id: "second-a" },
+		],
+	);
+	assert.deepEqual(
+		gtfs.getStopTimes({ trip_id: "reused-trip", feed_id: "feed-b" }).map(({ stop_id }) => stop_id),
+		["second-a"],
+	);
+}
+
+function testFeedIdentityValidation() {
+	const gtfs = new GTFS();
+	assert.throws(() => gtfs.loadFromBuffers([], []), /At least one GTFS buffer/);
+	assert.throws(() => gtfs.loadFromBuffers([Buffer.alloc(0)], []), /one feed ID per GTFS buffer/);
+	assert.throws(() => gtfs.loadFromBuffers([Buffer.alloc(0)], [" "]), /non-empty/);
+	assert.throws(() => gtfs.loadFromBuffers([Buffer.alloc(0), Buffer.alloc(0)], ["same", "same"]), /unique/);
+}
+
 function makeLargeShapeFeed(pointCount: number): Buffer {
 	const rows = new Array<string>(pointCount + 1);
 	rows[0] = shapesHeader;
@@ -315,5 +350,7 @@ async function testIndexedLookupScaling() {
 
 await testShapeFiltersAndMergeStrategies();
 await testQualifiedIdentityAndRealtimeProvenance();
+await testTripStopTimeIndexAcrossFeeds();
+testFeedIdentityValidation();
 await testIndexedLookupScaling();
 console.log("All QDF-GTFS tests passed.");
