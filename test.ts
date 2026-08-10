@@ -96,10 +96,22 @@ async function testShapeFiltersAndMergeStrategies() {
 	await overwrite.loadFromBuffers([feedA, feedB], ["feed-a", "feed-b"]);
 
 	const all = overwrite.getShapes();
-	assert.equal(all.length, 4);
+	assert.equal(all.length, 6);
 
 	const shared = overwrite.getShapes({ shape_id: "shared" });
 	assert.deepEqual(project(shared), [
+		{
+			shape_id: "shared",
+			shape_pt_sequence: 1,
+			shape_dist_traveled: null,
+			feed_id: "feed-a",
+		},
+		{
+			shape_id: "shared",
+			shape_pt_sequence: 2,
+			shape_dist_traveled: 1.5,
+			feed_id: "feed-a",
+		},
 		{
 			shape_id: "shared",
 			shape_pt_sequence: 1,
@@ -120,11 +132,11 @@ async function testShapeFiltersAndMergeStrategies() {
 	);
 	assert.deepEqual(
 		overwrite.getShapes({ shape_id: "shared", feed_id: "feed-b" }),
-		shared,
+		shared.filter((shape) => shape.feed_id === "feed-b"),
 	);
 	assert.deepEqual(
 		overwrite.getShapes({ shape_id: "shared", feed_id: "feed-a" }),
-		[],
+		shared.filter((shape) => shape.feed_id === "feed-a"),
 	);
 	assert.deepEqual(overwrite.getShapes({ shape_id: "missing" }), []);
 	assert.deepEqual(overwrite.getShapes({ feed_id: "missing" }), []);
@@ -136,16 +148,115 @@ async function testShapeFiltersAndMergeStrategies() {
 	await ignore.loadFromBuffers([feedA, feedB], ["feed-a", "feed-b"]);
 	assert.deepEqual(
 		ignore.getShapes({ shape_id: "shared" }).map((shape) => shape.feed_id),
-		["feed-a", "feed-a"],
+		["feed-a", "feed-a", "feed-b", "feed-b"],
 	);
 
 	const throwing = new GTFS({
 		filesToLoad: ["shapes.txt"],
 		mergeStrategy: GTFSMergeStrategy.THROW,
 	});
-	await assert.rejects(
-		throwing.loadFromBuffers([feedA, feedB], ["feed-a", "feed-b"]),
-		/Duplicate shape: shared/,
+	await throwing.loadFromBuffers([feedA, feedB], ["feed-a", "feed-b"]);
+	assert.equal(throwing.getShapes({ shape_id: "shared" }).length, 4);
+}
+
+function makeCollisionFeed(name: string): Buffer {
+	return createZip({
+		"agency.txt":
+			"agency_id,agency_name,agency_url,agency_timezone\n" +
+			`shared-agency,${name},https://example.invalid,Australia/Brisbane\n`,
+		"routes.txt":
+			"route_id,agency_id,route_short_name,route_type\n" +
+			"shared-route,shared-agency,R,2\n",
+		"trips.txt":
+			"route_id,service_id,trip_id,shape_id\n" +
+			"shared-route,shared-service,shared-trip,shared-shape\n",
+		"stops.txt":
+			"stop_id,stop_name,stop_lat,stop_lon\n" +
+			`shared-stop,${name} Stop,-27.0,153.0\n`,
+		"stop_times.txt":
+			"trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"shared-trip,25:30:00,25:31:00,shared-stop,1\n",
+		"calendar.txt":
+			"service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"shared-service,1,1,1,1,1,1,1,20260801,20260831\n",
+		"calendar_dates.txt":
+			"service_id,date,exception_type\n" +
+			"shared-service,20260805,2\n",
+		"shapes.txt":
+			shapesHeader + "shared-shape,-27.0,153.0,1,0\n",
+	});
+}
+
+function protobufVarint(value: number): Buffer {
+	const bytes: number[] = [];
+	do {
+		let byte = value & 0x7f;
+		value >>>= 7;
+		if (value) byte |= 0x80;
+		bytes.push(byte);
+	} while (value);
+	return Buffer.from(bytes);
+}
+
+function protobufField(tag: number, body: Buffer | string): Buffer {
+	const bytes = typeof body === "string" ? Buffer.from(body) : body;
+	return Buffer.concat([protobufVarint((tag << 3) | 2), protobufVarint(bytes.length), bytes]);
+}
+
+function makeTripUpdateFeed(updateId: string, tripId: string): Buffer {
+	const header = protobufField(1, "2.0");
+	const descriptor = protobufField(1, tripId);
+	const tripUpdate = protobufField(1, descriptor);
+	const entity = Buffer.concat([protobufField(1, updateId), protobufField(3, tripUpdate)]);
+	return Buffer.concat([protobufField(1, header), protobufField(2, entity)]);
+}
+
+async function testQualifiedIdentityAndRealtimeProvenance() {
+	const gtfs = new GTFS();
+	await gtfs.loadFromBuffers(
+		[makeCollisionFeed("Alpha"), makeCollisionFeed("Beta")],
+		["feed-a", "feed-b"],
+	);
+
+	assert.equal(gtfs.getTrips({ trip_id: "shared-trip" }).length, 2);
+	assert.equal(gtfs.getStops({ stop_id: "shared-stop" }).length, 2);
+	assert.equal(gtfs.getRoutes({ route_id: "shared-route" }).length, 2);
+	assert.equal(gtfs.getStopTimes({ trip_id: "shared-trip" }).length, 2);
+	assert.equal(gtfs.getShapes({ shape_id: "shared-shape" }).length, 2);
+	assert.equal(gtfs.getCalendars({ service_id: "shared-service" }).length, 2);
+	assert.equal(gtfs.getStopTimes({ trip_id: "shared-trip", feed_id: "feed-a" })[0].arrival_time, 91800);
+	assert.equal(gtfs.getServiceDatesByTrip({ feedId: "feed-a", localId: "shared-trip" }).includes("20260805"), false);
+	assert.equal(gtfs.getServiceDatesByTrip({ feedId: "feed-b", localId: "shared-trip" }).includes("20260806"), true);
+
+	gtfs.updateRealtime({
+		kind: "trip-updates",
+		data: makeTripUpdateFeed("a-1", "shared-trip"),
+		targetFeedId: "feed-a",
+		sourceId: "source-a",
+	});
+	gtfs.updateRealtime({
+		kind: "trip-updates",
+		data: makeTripUpdateFeed("b-1", "shared-trip"),
+		targetFeedId: "feed-b",
+		sourceId: "source-b",
+	});
+	assert.deepEqual(
+		gtfs.getRealtimeTripUpdates().map(({ update_id, feed_id, source_id }) => ({ update_id, feed_id, source_id })),
+		[
+			{ update_id: "a-1", feed_id: "feed-a", source_id: "source-a" },
+			{ update_id: "b-1", feed_id: "feed-b", source_id: "source-b" },
+		],
+	);
+
+	gtfs.updateRealtime({
+		kind: "trip-updates",
+		data: makeTripUpdateFeed("a-2", "shared-trip"),
+		targetFeedId: "feed-a",
+		sourceId: "source-a",
+	});
+	assert.deepEqual(
+		gtfs.getRealtimeTripUpdates().map((update) => update.update_id).sort(),
+		["a-2", "b-1"],
 	);
 }
 
@@ -203,5 +314,6 @@ async function testIndexedLookupScaling() {
 }
 
 await testShapeFiltersAndMergeStrategies();
+await testQualifiedIdentityAndRealtimeProvenance();
 await testIndexedLookupScaling();
 console.log("All QDF-GTFS tests passed.");

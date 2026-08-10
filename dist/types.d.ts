@@ -130,9 +130,23 @@ export declare enum GTFSMergeStrategy {
     THROW = 2
 }
 export interface GTFSFeedConfig {
+    id: string;
     url: string;
     headers?: Record<string, string>;
-    feed_id?: string;
+}
+/** A collision-safe reference to an entity inside one static GTFS dataset. */
+export interface QualifiedEntityId {
+    feedId: string;
+    localId: string;
+}
+/**
+ * Realtime provenance is deliberately separate from the static feed namespace.
+ * `targetFeedId` says which static dataset the entities update; `id`
+ * identifies the endpoint that supplied them.
+ */
+export interface GTFSRealtimeFeedConfig extends GTFSFeedConfig {
+    targetFeedId: string;
+    kind: "trip-updates" | "vehicles" | "alerts";
 }
 export interface Agency {
     agency_id: string | null;
@@ -260,6 +274,7 @@ export interface RealtimeStopTimeUpdate {
     departure_uncertainty: number | null;
     schedule_relationship: StopTimeScheduleRelationship;
     feed_id: string;
+    source_id: string;
 }
 export interface RealtimeUpdateTripInfo {
     trip_id: string;
@@ -283,9 +298,11 @@ export interface RealtimeTripUpdate {
     timestamp: number | null;
     delay: number | null;
     feed_id: string;
+    source_id: string;
 }
 export interface RealtimeFilter {
     feed_id?: string;
+    source_id?: string;
     trip_id?: string;
     route_id?: string;
     stop_id?: string;
@@ -314,6 +331,8 @@ export interface RealtimeVehiclePosition {
     congestion_level: CongestionLevel | null;
     occupancy_status: OccupancyStatus | null;
     occupancy_percentage: number | null;
+    feed_id: string;
+    source_id: string;
 }
 export interface RealtimeAlert {
     update_id: string;
@@ -325,6 +344,7 @@ export interface RealtimeAlert {
     description_text: string;
     severity_level: AlertSeverityLevel | null;
     feed_id: string;
+    source_id: string;
 }
 export interface TripQuery {
     trip_id?: string;
@@ -365,7 +385,7 @@ export interface GTFSOptions {
     skipStopTimes?: boolean;
 }
 export interface GTFSActions {
-    mergeStops(targetStopId: string, sourceStopIds: string[]): void;
-    updateStop(stop_id: string, partialStop: Partial<Stop>, feed_id?: string): boolean;
+    mergeStops(targetStopId: string, sourceStopIds: string[], feed_id: string): void;
+    updateStop(stop_id: string, partialStop: Partial<Stop>, feed_id: string): boolean;
 }
 export declare function formatTimestamp(ts?: number | null): string;

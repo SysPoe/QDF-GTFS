@@ -840,7 +840,7 @@ size_t parse_calendar_dates(GTFSData& data, const char* content_data, size_t con
     return count;
 }
 
-size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<Shape>>& merged_shapes, const char* content_data, size_t content_size, int merge_strategy, const std::string& feed_id, const std::function<void(size_t)>& on_progress = nullptr) {
+size_t parse_shapes(GTFSData& data, std::unordered_map<uint64_t, std::vector<Shape>>& merged_shapes, const char* content_data, size_t content_size, int merge_strategy, const std::string& feed_id, const std::function<void(size_t)>& on_progress = nullptr) {
     const char* ptr = content_data;
     const char* end = content_data + content_size;
     const char* line_start; size_t line_len;
@@ -897,14 +897,16 @@ size_t parse_shapes(GTFSData& data, std::unordered_map<std::string, std::vector<
     }
 
     for (auto& [id, vec] : feed_shapes) {
-        if (merge_strategy == 1 && merged_shapes.count(id)) continue;
-        if (merge_strategy == 2 && merged_shapes.count(id)) throw std::runtime_error("Duplicate shape: " + id);
+        const uint32_t shape_id_int = vec.empty() ? data.string_pool.intern(id) : vec.front().shape_id;
+        const uint64_t qualified_id = (static_cast<uint64_t>(feed_id_int) << 32) | shape_id_int;
+        if (merge_strategy == 1 && merged_shapes.count(qualified_id)) continue;
+        if (merge_strategy == 2 && merged_shapes.count(qualified_id)) throw std::runtime_error("Duplicate shape: " + feed_id + "/" + id);
 
         std::sort(vec.begin(), vec.end(), [](const Shape& a, const Shape& b){
             return a.shape_pt_sequence < b.shape_pt_sequence;
         });
 
-        merged_shapes[id] = std::move(vec);
+        merged_shapes[qualified_id] = std::move(vec);
     }
 
     if (on_progress && bytes_read > last_report) on_progress(bytes_read);
@@ -981,8 +983,8 @@ size_t parse_feed_info(GTFSData& data, const char* content_data, size_t content_
 void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, const std::vector<std::string>& feed_ids, int merge_strategy, LogFn log, ProgressFn progress, const std::vector<std::string>& files_to_load = {}) {
     data.clear();
 
-    std::unordered_map<uint32_t, std::vector<StopTime>> merged_stop_times;
-    std::unordered_map<std::string, std::vector<Shape>> merged_shapes;
+    std::unordered_map<uint64_t, std::vector<StopTime>> merged_stop_times;
+    std::unordered_map<uint64_t, std::vector<Shape>> merged_shapes;
 
     // Build effective file filter (empty = load all)
     const std::vector<std::string> all_target_files = {
@@ -1181,15 +1183,16 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
                 }
 
                 for (auto& [tid, vec] : current_feed_stop_times) {
-                    if (merge_strategy == 1 && merged_stop_times.count(tid)) continue;
-                    if (merge_strategy == 2 && merged_stop_times.count(tid)) {
-                        throw std::runtime_error("Duplicate trip_id in stop_times: " + data.string_pool.get(tid));
+                    const uint64_t qualified_id = (static_cast<uint64_t>(current_feed_id_int) << 32) | tid;
+                    if (merge_strategy == 1 && merged_stop_times.count(qualified_id)) continue;
+                    if (merge_strategy == 2 && merged_stop_times.count(qualified_id)) {
+                        throw std::runtime_error("Duplicate trip_id in stop_times: " + current_feed_id + "/" + data.string_pool.get(tid));
                     }
 
                     std::sort(vec.begin(), vec.end(), [](const StopTime& a, const StopTime& b) {
                         return a.stop_sequence < b.stop_sequence;
                     });
-                    merged_stop_times[tid] = std::move(vec);
+                    merged_stop_times[qualified_id] = std::move(vec);
                 }
 
                 if (log) log("Loaded " + std::to_string(total_count) + " entries from stop_times.txt");
@@ -1224,7 +1227,7 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
             std::make_move_iterator(vec.end())
         );
         if (shape_id != 0xFFFFFFFF) {
-            data.shape_ranges_by_id[shape_id] = {begin, data.shapes.size()};
+            data.shape_ranges_by_id[shape_id].push_back({begin, data.shapes.size()});
         }
     }
 
@@ -1241,6 +1244,7 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
     if (log) log("Sorting stop times...");
     std::sort(data.stop_times.begin(), data.stop_times.end(),
         [](const StopTime& a, const StopTime& b) {
+            if (a.feed_id != b.feed_id) return a.feed_id < b.feed_id;
             if (a.trip_id != b.trip_id) return a.trip_id < b.trip_id;
             return a.stop_sequence < b.stop_sequence;
         });

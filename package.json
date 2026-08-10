@@ -20,7 +20,7 @@
   "scripts": {
     "test": "tsx test.ts",
     "build": "tsc",
-    "prepare": "npm run build"
+    "prepare": "nub run build"
   },
   "keywords": [],
   "author": "",
@@ -34,5 +34,12 @@
     "node-gyp": "^12.1.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "nub",
+      "version": "^0.6.0",
+      "onFail": "warn"
+    }
   }
 }

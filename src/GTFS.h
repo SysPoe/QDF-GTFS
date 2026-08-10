@@ -269,6 +269,7 @@ struct RealtimeStopTimeUpdate {
 
     int schedule_relationship = 0;
     std::string feed_id;
+    std::string source_id;
 };
 
 struct RealtimeTripUpdate {
@@ -280,6 +281,7 @@ struct RealtimeTripUpdate {
     uint64_t timestamp = 0;
     int delay = -2147483648;
     std::string feed_id;
+    std::string source_id;
 };
 
 struct RealtimePosition {
@@ -304,6 +306,7 @@ struct RealtimeVehiclePosition {
     int occupancy_status = -1;
     int occupancy_percentage = -1;
     std::string feed_id;
+    std::string source_id;
 };
 
 struct RealtimeAlert {
@@ -318,6 +321,7 @@ struct RealtimeAlert {
     std::string description_text;
     int severity_level = -1;
     std::string feed_id;
+    std::string source_id;
 };
 
 class GTFSData {
@@ -340,9 +344,9 @@ public:
 
     std::unordered_map<std::string, std::unordered_map<std::string, Trip>> trips;
     std::vector<Shape> shapes;
-    // Shapes belonging to one shape_id are contiguous after finalization.
-    // The pair contains [begin, end) offsets into shapes.
-    std::unordered_map<uint32_t, std::pair<size_t, size_t>> shape_ranges_by_id;
+    // Each range is one feed-qualified shape. A bare shape_id can therefore
+    // resolve to several ranges without scanning the full shape array.
+    std::unordered_map<uint32_t, std::vector<std::pair<size_t, size_t>>> shape_ranges_by_id;
     std::vector<FeedInfo> feed_info;
 
     // O(1) trip lookup by (feed_id_intern << 32 | trip_id_intern)

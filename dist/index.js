@@ -85,11 +85,11 @@ export class GTFS {
     serviceIdsByDateCache = null;
     tripsByServiceIdCache = null;
     actions = {
-        mergeStops: (targetStopId, sourceStopIds) => {
-            this.addonInstance.mergeStops(targetStopId, sourceStopIds);
+        mergeStops: (targetStopId, sourceStopIds, feed_id) => {
+            this.addonInstance.mergeStops(targetStopId, sourceStopIds, feed_id);
         },
         updateStop: (stop_id, partialStop, feed_id) => {
-            return this.addonInstance.updateStop(stop_id, partialStop, feed_id || "");
+            return this.addonInstance.updateStop(stop_id, partialStop, feed_id);
         }
     };
     constructor(options) {
@@ -130,8 +130,7 @@ export class GTFS {
     async loadStatic(feeds) {
         const feedList = Array.isArray(feeds) ? feeds : [feeds];
         const buffers = [];
-        for (const feed of feedList) {
-            const config = typeof feed === 'string' ? { url: feed } : feed;
+        for (const config of feedList) {
             let buffer = null;
             const cacheDir = this.cacheDir || './cache';
             let cachePath = '';
@@ -179,7 +178,7 @@ export class GTFS {
             }
             buffers.push(buffer);
         }
-        const feedIds = feedList.map(f => typeof f === 'string' ? '' : (f.feed_id || ''));
+        const feedIds = feedList.map((feed) => feed.id);
         return this.loadFromBuffers(buffers, feedIds);
     }
     async loadFromPath(paths, feedIds) {
@@ -228,16 +227,20 @@ export class GTFS {
     getFeedInfo() {
         return this.addonInstance.getFeedInfo();
     }
+    qualifiedKey(feedId, localId) {
+        return `${feedId.length}:${feedId}${localId}`;
+    }
     getServiceDatesMap() {
         if (this.serviceDatesCache && this.serviceDatesSets && this.serviceIdsByDateCache)
             return this.serviceDatesCache;
         const calendars = this.getCalendars();
         const calendarDates = this.getCalendarDates();
-        const serviceDates = {};
+        const serviceDates = new Map();
         for (const calendar of calendars) {
             const { service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date } = calendar;
-            if (!serviceDates[service_id])
-                serviceDates[service_id] = new Set();
+            const key = this.qualifiedKey(calendar.feed_id, service_id);
+            if (!serviceDates.has(key))
+                serviceDates.set(key, new Set());
             const sDateStr = String(start_date);
             const eDateStr = String(end_date);
             let currentDate = new Date(Date.UTC(Number(sDateStr.substring(0, 4)), Number(sDateStr.substring(4, 6)) - 1, Number(sDateStr.substring(6, 8))));
@@ -264,7 +267,7 @@ export class GTFS {
                     const m = currentDate.getUTCMonth() + 1;
                     const d = currentDate.getUTCDate();
                     const dateStr = `${y}${m < 10 ? '0' : ''}${m}${d < 10 ? '0' : ''}${d}`;
-                    serviceDates[service_id].add(dateStr);
+                    serviceDates.get(key).add(dateStr);
                 }
                 currentDate.setUTCDate(currentDate.getUTCDate() + 1);
             }
@@ -273,24 +276,35 @@ export class GTFS {
             const { service_id, date, exception_type } = calendarDate;
             if (!date)
                 continue;
-            if (!serviceDates[service_id])
-                serviceDates[service_id] = new Set();
+            const key = this.qualifiedKey(calendarDate.feed_id, service_id);
+            if (!serviceDates.has(key))
+                serviceDates.set(key, new Set());
             if (exception_type === 1) {
-                serviceDates[service_id].add(date);
+                serviceDates.get(key).add(date);
             }
             else if (exception_type === 2) {
-                serviceDates[service_id].delete(date);
+                serviceDates.get(key).delete(date);
             }
         }
-        const sortedServiceDates = {};
-        const idsByDate = {};
-        for (const service_id in serviceDates) {
-            const dates = Array.from(serviceDates[service_id]).sort();
-            sortedServiceDates[service_id] = dates;
+        const sortedServiceDates = new Map();
+        const idsByDate = new Map();
+        for (const calendar of calendars) {
+            const key = this.qualifiedKey(calendar.feed_id, calendar.service_id);
+            const dates = Array.from(serviceDates.get(key) ?? []).sort();
+            sortedServiceDates.set(key, dates);
             for (const d of dates) {
-                if (!idsByDate[d])
-                    idsByDate[d] = [];
-                idsByDate[d].push(service_id);
+                const ids = idsByDate.get(d) ?? [];
+                if (!ids.some((id) => id.feedId === calendar.feed_id && id.localId === calendar.service_id)) {
+                    ids.push({ feedId: calendar.feed_id, localId: calendar.service_id });
+                }
+                idsByDate.set(d, ids);
+            }
+        }
+        for (const calendarDate of calendarDates) {
+            const key = this.qualifiedKey(calendarDate.feed_id, calendarDate.service_id);
+            if (!sortedServiceDates.has(key)) {
+                const dates = Array.from(serviceDates.get(key) ?? []).sort();
+                sortedServiceDates.set(key, dates);
             }
         }
         this.serviceDatesSets = serviceDates;
@@ -302,11 +316,12 @@ export class GTFS {
         if (this.tripsByServiceIdCache)
             return this.tripsByServiceIdCache;
         const allTrips = this.addonInstance.getTrips({});
-        const map = {};
+        const map = new Map();
         for (const trip of allTrips) {
-            if (!map[trip.service_id])
-                map[trip.service_id] = [];
-            map[trip.service_id].push(trip);
+            const key = this.qualifiedKey(trip.feed_id, trip.service_id);
+            const trips = map.get(key) ?? [];
+            trips.push(trip);
+            map.set(key, trips);
         }
         this.tripsByServiceIdCache = map;
         return map;
@@ -323,40 +338,28 @@ export class GTFS {
     getCalendarDates(filter) {
         return this.addonInstance.getCalendarDates(filter);
     }
-    getServiceDates(service_id) {
-        return this.getServiceDatesMap()[service_id] ?? [];
+    getServiceDates(service) {
+        return this.getServiceDatesMap().get(this.qualifiedKey(service.feedId, service.localId)) ?? [];
     }
-    getServiceDatesByTrip(trip_id) {
-        const trips = this.getTrips({ trip_id });
+    getServiceDatesByTrip(trip) {
+        const trips = this.getTrips({ trip_id: trip.localId, feed_id: trip.feedId });
         if (trips.length === 0)
             return [];
-        return this.getServiceDates(trips[0].service_id);
+        return this.getServiceDates({ feedId: trips[0].feed_id, localId: trips[0].service_id });
     }
-    updateRealtime(alerts, tripUpdates, vehiclePositions, feed_id) {
-        this.addonInstance.updateRealtime(alerts, tripUpdates, vehiclePositions, feed_id || "");
+    updateRealtime(input) {
+        this.addonInstance.updateRealtime(input.kind === "alerts" ? input.data : [], input.kind === "trip-updates" ? input.data : [], input.kind === "vehicles" ? input.data : [], input.targetFeedId, input.sourceId);
     }
-    async updateRealtimeFromUrl(alertsArg, tripUpdatesArg, vehiclePositionsArg) {
-        const normalize = (arg) => {
-            if (!arg)
-                return [];
-            if (Array.isArray(arg)) {
-                return arg.map(a => typeof a === 'string' ? { url: a } : a);
-            }
-            if (typeof arg === 'string')
-                return [{ url: arg }];
-            return [arg];
-        };
-        const alertConfigs = normalize(alertsArg);
-        const tuConfigs = normalize(tripUpdatesArg);
-        const vpConfigs = normalize(vehiclePositionsArg);
-        const [alerts, tripUpdates, vehiclePositions] = await Promise.all([
-            Promise.all(alertConfigs.map(c => this.download(c.url, "Downloading Alerts", false, c.headers))),
-            Promise.all(tuConfigs.map(c => this.download(c.url, "Downloading TripUpdates", false, c.headers))),
-            Promise.all(vpConfigs.map(c => this.download(c.url, "Downloading VehiclePositions", false, c.headers)))
-        ]);
-        // Note: this doesn't handle multiple feeds with different IDs in a single call easily if we want to associate them.
-        // But for common use cases it's fine or user can call multiple times.
-        this.addonInstance.updateRealtime(alerts, tripUpdates, vehiclePositions);
+    async updateRealtimeFromUrl(sources) {
+        await Promise.all(sources.map(async (source) => {
+            const data = await this.download(source.url, `Downloading ${source.kind}`, false, source.headers);
+            this.updateRealtime({
+                kind: source.kind,
+                data,
+                targetFeedId: source.targetFeedId,
+                sourceId: source.id,
+            });
+        }));
     }
     getRealtimeTripUpdates(filter) {
         return this.addonInstance.getRealtimeTripUpdates(filter || {});
@@ -367,8 +370,8 @@ export class GTFS {
     getRealtimeAlerts(filter) {
         return this.addonInstance.getRealtimeAlerts(filter || {});
     }
-    clearRealtime(feed_id) {
-        this.addonInstance.clearRealtime(feed_id || "");
+    clearRealtime(filter = {}) {
+        this.addonInstance.clearRealtime(filter.targetFeedId || "", filter.sourceId || "");
     }
     download(url, taskName = "Downloading", showProgressBar = true, headers) {
         return new Promise((resolve, reject) => {

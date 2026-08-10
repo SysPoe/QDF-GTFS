@@ -467,66 +467,86 @@ Napi::Value GTFSAddon::UpdateRealtime(const Napi::CallbackInfo& info) {
     if (info.Length() > 3 && info[3].IsString()) {
         feed_id = info[3].As<Napi::String>().Utf8Value();
     }
+    std::string source_id = "";
+    if (info.Length() > 4 && info[4].IsString()) {
+        source_id = info[4].As<Napi::String>().Utf8Value();
+    }
 
-    // If feed_id is provided, only clear updates for that feed.
-    // Otherwise, clear everything.
-    if (feed_id.empty()) {
+    auto has_payload = [](const Napi::Value& value) -> bool {
+        return value.IsBuffer() || (value.IsArray() && value.As<Napi::Array>().Length() > 0);
+    };
+    const bool has_alerts = has_payload(info[0]);
+    const bool has_trip_updates = has_payload(info[1]);
+    const bool has_vehicle_positions = has_payload(info[2]);
+
+    // Legacy callers without provenance replace the complete realtime snapshot.
+    // Provenance-aware callers replace only the supplied kind/source pair.
+    if (source_id.empty()) {
         data.realtime_trip_updates.clear();
         data.realtime_vehicle_positions.clear();
         data.realtime_alerts.clear();
     } else {
-        data.realtime_trip_updates.erase(
-            std::remove_if(data.realtime_trip_updates.begin(), data.realtime_trip_updates.end(), [&](const gtfs::RealtimeTripUpdate& tu){ return tu.feed_id == feed_id; }),
-            data.realtime_trip_updates.end()
-        );
-        data.realtime_vehicle_positions.erase(
-            std::remove_if(data.realtime_vehicle_positions.begin(), data.realtime_vehicle_positions.end(), [&](const gtfs::RealtimeVehiclePosition& vp){ return vp.feed_id == feed_id; }),
-            data.realtime_vehicle_positions.end()
-        );
-        data.realtime_alerts.erase(
-            std::remove_if(data.realtime_alerts.begin(), data.realtime_alerts.end(), [&](const gtfs::RealtimeAlert& al){ return al.feed_id == feed_id; }),
-            data.realtime_alerts.end()
-        );
+        const auto matches_source = [&](const auto& item) {
+            return item.source_id == source_id && (feed_id.empty() || item.feed_id == feed_id);
+        };
+        if (has_trip_updates) {
+            data.realtime_trip_updates.erase(
+                std::remove_if(data.realtime_trip_updates.begin(), data.realtime_trip_updates.end(), matches_source),
+                data.realtime_trip_updates.end()
+            );
+        }
+        if (has_vehicle_positions) {
+            data.realtime_vehicle_positions.erase(
+                std::remove_if(data.realtime_vehicle_positions.begin(), data.realtime_vehicle_positions.end(), matches_source),
+                data.realtime_vehicle_positions.end()
+            );
+        }
+        if (has_alerts) {
+            data.realtime_alerts.erase(
+                std::remove_if(data.realtime_alerts.begin(), data.realtime_alerts.end(), matches_source),
+                data.realtime_alerts.end()
+            );
+        }
     }
 
     if (info[0].IsBuffer()) {
         Napi::Buffer<unsigned char> buf = info[0].As<Napi::Buffer<unsigned char>>();
-        gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 2, feed_id);
+        gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 2, feed_id, source_id);
     } else if (info[0].IsArray()) {
         Napi::Array arr = info[0].As<Napi::Array>();
         for(uint32_t i=0; i<arr.Length(); ++i) {
              Napi::Value v = arr[i];
              if(v.IsBuffer()) {
                  Napi::Buffer<unsigned char> buf = v.As<Napi::Buffer<unsigned char>>();
-                 gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 2, feed_id);
+                 gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 2, feed_id, source_id);
              }
         }
     }
 
     if (info[1].IsBuffer()) {
         Napi::Buffer<unsigned char> buf = info[1].As<Napi::Buffer<unsigned char>>();
-        gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 0, feed_id);
+        gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 0, feed_id, source_id);
     } else if (info[1].IsArray()) {
         Napi::Array arr = info[1].As<Napi::Array>();
         for(uint32_t i=0; i<arr.Length(); ++i) {
              Napi::Value v = arr[i];
              if(v.IsBuffer()) {
                  Napi::Buffer<unsigned char> buf = v.As<Napi::Buffer<unsigned char>>();
-                 gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 0, feed_id);
+                 gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 0, feed_id, source_id);
              }
         }
     }
 
     if (info[2].IsBuffer()) {
         Napi::Buffer<unsigned char> buf = info[2].As<Napi::Buffer<unsigned char>>();
-        gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 1, feed_id);
+        gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 1, feed_id, source_id);
     } else if (info[2].IsArray()) {
         Napi::Array arr = info[2].As<Napi::Array>();
         for(uint32_t i=0; i<arr.Length(); ++i) {
              Napi::Value v = arr[i];
              if(v.IsBuffer()) {
                  Napi::Buffer<unsigned char> buf = v.As<Napi::Buffer<unsigned char>>();
-                 gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 1, feed_id);
+                 gtfs::parse_realtime_feed(data, buf.Data(), buf.Length(), 1, feed_id, source_id);
              }
         }
     }
@@ -540,22 +560,26 @@ Napi::Value GTFSAddon::ClearRealtime(const Napi::CallbackInfo& info) {
     if (info.Length() > 0 && info[0].IsString()) {
         feed_id = info[0].As<Napi::String>().Utf8Value();
     }
+    std::string source_id = "";
+    if (info.Length() > 1 && info[1].IsString()) {
+        source_id = info[1].As<Napi::String>().Utf8Value();
+    }
 
-    if (feed_id.empty()) {
+    if (feed_id.empty() && source_id.empty()) {
         data.realtime_trip_updates.clear();
         data.realtime_vehicle_positions.clear();
         data.realtime_alerts.clear();
     } else {
         data.realtime_trip_updates.erase(
-            std::remove_if(data.realtime_trip_updates.begin(), data.realtime_trip_updates.end(), [&](const gtfs::RealtimeTripUpdate& tu){ return tu.feed_id == feed_id; }),
+            std::remove_if(data.realtime_trip_updates.begin(), data.realtime_trip_updates.end(), [&](const gtfs::RealtimeTripUpdate& tu){ return (feed_id.empty() || tu.feed_id == feed_id) && (source_id.empty() || tu.source_id == source_id); }),
             data.realtime_trip_updates.end()
         );
         data.realtime_vehicle_positions.erase(
-            std::remove_if(data.realtime_vehicle_positions.begin(), data.realtime_vehicle_positions.end(), [&](const gtfs::RealtimeVehiclePosition& vp){ return vp.feed_id == feed_id; }),
+            std::remove_if(data.realtime_vehicle_positions.begin(), data.realtime_vehicle_positions.end(), [&](const gtfs::RealtimeVehiclePosition& vp){ return (feed_id.empty() || vp.feed_id == feed_id) && (source_id.empty() || vp.source_id == source_id); }),
             data.realtime_vehicle_positions.end()
         );
         data.realtime_alerts.erase(
-            std::remove_if(data.realtime_alerts.begin(), data.realtime_alerts.end(), [&](const gtfs::RealtimeAlert& al){ return al.feed_id == feed_id; }),
+            std::remove_if(data.realtime_alerts.begin(), data.realtime_alerts.end(), [&](const gtfs::RealtimeAlert& al){ return (feed_id.empty() || al.feed_id == feed_id) && (source_id.empty() || al.source_id == source_id); }),
             data.realtime_alerts.end()
         );
     }
@@ -576,6 +600,7 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
     for (const auto& tu : data.realtime_trip_updates) {
         if (has_filter) {
             if (filter.Has("feed_id") && tu.feed_id != filter.Get("feed_id").As<Napi::String>().Utf8Value()) continue;
+            if (filter.Has("source_id") && tu.source_id != filter.Get("source_id").As<Napi::String>().Utf8Value()) continue;
             if (filter.Has("trip_id") && tu.trip.trip_id != filter.Get("trip_id").As<Napi::String>().Utf8Value()) continue;
             if (filter.Has("route_id") && tu.trip.route_id != filter.Get("route_id").As<Napi::String>().Utf8Value()) continue;
             if (filter.Has("vehicle_id") && tu.vehicle.id != filter.Get("vehicle_id").As<Napi::String>().Utf8Value()) continue;
@@ -603,6 +628,7 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
         else trip.Set("start_date", env.Null());
 
         trip.Set("schedule_relationship", tu.trip.schedule_relationship);
+        trip.Set("feed_id", tu.trip.feed_id);
 
         obj.Set("trip", trip);
 
@@ -646,6 +672,7 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
 
             stu_obj.Set("schedule_relationship", stu.schedule_relationship);
             stu_obj.Set("feed_id", stu.feed_id);
+            stu_obj.Set("source_id", stu.source_id);
 
             stus[j] = stu_obj;
         }
@@ -657,6 +684,7 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
         if (tu.delay != -2147483648) obj.Set("delay", tu.delay);
         else obj.Set("delay", env.Null());
         obj.Set("feed_id", tu.feed_id);
+        obj.Set("source_id", tu.source_id);
 
         arr[i] = obj;
     }
@@ -677,6 +705,7 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
     for (const auto& vp : data.realtime_vehicle_positions) {
         if (has_filter) {
             if (filter.Has("feed_id") && vp.feed_id != filter.Get("feed_id").As<Napi::String>().Utf8Value()) continue;
+            if (filter.Has("source_id") && vp.source_id != filter.Get("source_id").As<Napi::String>().Utf8Value()) continue;
             if (filter.Has("trip_id") && vp.trip.trip_id != filter.Get("trip_id").As<Napi::String>().Utf8Value()) continue;
             if (filter.Has("route_id") && vp.trip.route_id != filter.Get("route_id").As<Napi::String>().Utf8Value()) continue;
             if (filter.Has("vehicle_id") && vp.vehicle.id != filter.Get("vehicle_id").As<Napi::String>().Utf8Value()) continue;
@@ -705,6 +734,7 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
         else trip.Set("start_date", env.Null());
 
         trip.Set("schedule_relationship", vp.trip.schedule_relationship);
+        trip.Set("feed_id", vp.trip.feed_id);
 
         obj.Set("trip", trip);
 
@@ -749,6 +779,7 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
         if (vp.occupancy_percentage != -1) obj.Set("occupancy_percentage", vp.occupancy_percentage);
         else obj.Set("occupancy_percentage", env.Null());
         obj.Set("feed_id", vp.feed_id);
+        obj.Set("source_id", vp.source_id);
 
         arr[i] = obj;
     }
@@ -769,6 +800,7 @@ Napi::Value GTFSAddon::GetRealtimeAlerts(const Napi::CallbackInfo& info) {
     for (const auto& a : data.realtime_alerts) {
         if (has_filter) {
             if (filter.Has("feed_id") && a.feed_id != filter.Get("feed_id").As<Napi::String>().Utf8Value()) continue;
+            if (filter.Has("source_id") && a.source_id != filter.Get("source_id").As<Napi::String>().Utf8Value()) continue;
         }
         matches.push_back(&a);
     }
@@ -794,6 +826,7 @@ Napi::Value GTFSAddon::GetRealtimeAlerts(const Napi::CallbackInfo& info) {
         if (a.severity_level != -1) obj.Set("severity_level", a.severity_level);
         else obj.Set("severity_level", env.Null());
         obj.Set("feed_id", a.feed_id);
+        obj.Set("source_id", a.source_id);
 
         arr[i] = obj;
     }
@@ -1239,29 +1272,31 @@ Napi::Value GTFSAddon::GetShapes(const Napi::CallbackInfo& info) {
         if (feed_id == 0xFFFFFFFF) return Napi::Array::New(env);
     }
 
-    size_t begin = 0;
-    size_t end = data.shapes.size();
+    std::vector<std::pair<size_t, size_t>> ranges;
     if (has_shape_id) {
         auto range = data.shape_ranges_by_id.find(shape_id);
         if (range == data.shape_ranges_by_id.end()) return Napi::Array::New(env);
-        begin = range->second.first;
-        end = range->second.second;
+        ranges = range->second;
+    } else {
+        ranges.push_back({0, data.shapes.size()});
     }
 
     Napi::Array arr = Napi::Array::New(env);
     size_t count = 0;
-    for (size_t i = begin; i < end; ++i) {
-        const auto& shape = data.shapes[i];
-        if (has_feed_id && shape.feed_id != feed_id) continue;
+    for (const auto& [begin, end] : ranges) {
+        for (size_t i = begin; i < end; ++i) {
+            const auto& shape = data.shapes[i];
+            if (has_feed_id && shape.feed_id != feed_id) continue;
 
-        Napi::Object obj = Napi::Object::New(env);
-        obj.Set("shape_id", data.string_pool.get_ref(shape.shape_id));
-        obj.Set("shape_pt_lat", shape.shape_pt_lat);
-        obj.Set("shape_pt_lon", shape.shape_pt_lon);
-        obj.Set("shape_pt_sequence", shape.shape_pt_sequence);
-        if (!std::isnan(shape.shape_dist_traveled)) obj.Set("shape_dist_traveled", shape.shape_dist_traveled); else obj.Set("shape_dist_traveled", env.Null());
-        obj.Set("feed_id", data.string_pool.get_ref(shape.feed_id));
-        arr[count++] = obj;
+            Napi::Object obj = Napi::Object::New(env);
+            obj.Set("shape_id", data.string_pool.get_ref(shape.shape_id));
+            obj.Set("shape_pt_lat", shape.shape_pt_lat);
+            obj.Set("shape_pt_lon", shape.shape_pt_lon);
+            obj.Set("shape_pt_sequence", shape.shape_pt_sequence);
+            if (!std::isnan(shape.shape_dist_traveled)) obj.Set("shape_dist_traveled", shape.shape_dist_traveled); else obj.Set("shape_dist_traveled", env.Null());
+            obj.Set("feed_id", data.string_pool.get_ref(shape.feed_id));
+            arr[count++] = obj;
+        }
     }
     return arr;
 }
@@ -1374,12 +1409,15 @@ Napi::Value GTFSAddon::GetCalendarDates(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::MergeStops(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    if (info.Length() < 2 || !info[0].IsString() || !info[1].IsArray()) {
-        Napi::TypeError::New(env, "Expected targetStopId (string) and sourceStopIds (string[])").ThrowAsJavaScriptException();
+    if (info.Length() < 3 || !info[0].IsString() || !info[1].IsArray() || !info[2].IsString()) {
+        Napi::TypeError::New(env, "Expected targetStopId, sourceStopIds, and feedId").ThrowAsJavaScriptException();
         return env.Null();
     }
 
     std::string targetStopId = info[0].As<Napi::String>().Utf8Value();
+    std::string feedId = info[2].As<Napi::String>().Utf8Value();
+    uint32_t feedInternalId = data.string_pool.get_id(feedId);
+    if (feedInternalId == 0xFFFFFFFF) return env.Null();
     Napi::Array sourceStopsArray = info[1].As<Napi::Array>();
     
     std::unordered_set<std::string> sourceStopIds;
@@ -1401,23 +1439,20 @@ Napi::Value GTFSAddon::MergeStops(const Napi::CallbackInfo& info) {
 
     // 1. Update stop_times
     for (auto& st : data.stop_times) {
-        if (sourceStopInternalIds.count(st.stop_id)) {
+        if (st.feed_id == feedInternalId && sourceStopInternalIds.count(st.stop_id)) {
             st.stop_id = targetInternalId;
         }
     }
 
-    // 2. Rebuild stop_times_by_stop_id
-    auto& targetIndices = data.stop_times_by_stop_id[targetInternalId];
-    for (uint32_t srcId : sourceStopInternalIds) {
-        if (data.stop_times_by_stop_id.count(srcId)) {
-            auto& srcIndices = data.stop_times_by_stop_id.at(srcId);
-            targetIndices.insert(targetIndices.end(), srcIndices.begin(), srcIndices.end());
-            data.stop_times_by_stop_id.erase(srcId);
-        }
+    // 2. Rebuild the bare stop index because another feed may use the same IDs.
+    data.stop_times_by_stop_id.clear();
+    for (size_t index = 0; index < data.stop_times.size(); ++index) {
+        data.stop_times_by_stop_id[data.stop_times[index].stop_id].push_back(index);
     }
 
     // 3. Update parent_station references in stops
     for (auto& [fid, feed_map] : data.stops) {
+        if (fid != feedId) continue;
         for (auto& [id, stop] : feed_map) {
             if (stop.parent_station.has_value() && sourceStopIds.count(stop.parent_station.value())) {
                 stop.parent_station = targetStopId;
@@ -1427,6 +1462,7 @@ Napi::Value GTFSAddon::MergeStops(const Napi::CallbackInfo& info) {
 
     // 4. Remove source stops from data.stops
     for (auto& [fid, feed_map] : data.stops) {
+        if (fid != feedId) continue;
         for (const auto& s : sourceStopIds) {
             feed_map.erase(s);
         }
@@ -1434,6 +1470,7 @@ Napi::Value GTFSAddon::MergeStops(const Napi::CallbackInfo& info) {
 
     // 5. Update realtime data
     for (auto& tu : data.realtime_trip_updates) {
+        if (tu.feed_id != feedId) continue;
         for (auto& stu : tu.stop_time_updates) {
             if (sourceStopIds.count(stu.stop_id)) {
                 stu.stop_id = targetStopId;
@@ -1442,6 +1479,7 @@ Napi::Value GTFSAddon::MergeStops(const Napi::CallbackInfo& info) {
     }
 
     for (auto& vp : data.realtime_vehicle_positions) {
+        if (vp.feed_id != feedId) continue;
         if (sourceStopIds.count(vp.stop_id)) {
             vp.stop_id = targetStopId;
         }

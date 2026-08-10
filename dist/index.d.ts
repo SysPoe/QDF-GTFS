@@ -1,4 +1,4 @@
-import { Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSActions, RealtimeFilter } from './types.js';
+import { Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSActions, QualifiedEntityId, RealtimeFilter } from './types.js';
 export * from './types.js';
 export declare class GTFS {
     private addonInstance;
@@ -18,7 +18,7 @@ export declare class GTFS {
     actions: GTFSActions;
     constructor(options?: GTFSOptions);
     private showProgress;
-    loadStatic(feeds: (GTFSFeedConfig | string)[] | GTFSFeedConfig | string): Promise<void>;
+    loadStatic(feeds: GTFSFeedConfig[] | GTFSFeedConfig): Promise<void>;
     loadFromPath(paths: string[], feedIds?: string[]): Promise<void>;
     loadFromBuffers(buffers: Buffer[], feedIds?: string[]): Promise<void>;
     getRoutes(filter?: Partial<Route>): Route[];
@@ -26,19 +26,28 @@ export declare class GTFS {
     getStops(filter?: Partial<Stop>): Stop[];
     getStopTimes(query?: StopTimeQuery): StopTime[];
     getFeedInfo(): FeedInfo[];
+    private qualifiedKey;
     private getServiceDatesMap;
     private getTripsByServiceId;
     getTrips(filter?: TripQuery | Partial<Trip>): Trip[];
     getShapes(filter?: Partial<Shape>): Shape[];
     getCalendars(filter?: Partial<Calendar>): Calendar[];
     getCalendarDates(filter?: Partial<CalendarDate>): CalendarDate[];
-    getServiceDates(service_id: string): string[];
-    getServiceDatesByTrip(trip_id: string): string[];
-    updateRealtime(alerts: Buffer | Buffer[], tripUpdates: Buffer | Buffer[], vehiclePositions: Buffer | Buffer[], feed_id?: string): void;
-    updateRealtimeFromUrl(alertsArg?: (GTFSFeedConfig | string)[] | GTFSFeedConfig | string | null, tripUpdatesArg?: (GTFSFeedConfig | string)[] | GTFSFeedConfig | string | null, vehiclePositionsArg?: (GTFSFeedConfig | string)[] | GTFSFeedConfig | string | null): Promise<void>;
+    getServiceDates(service: QualifiedEntityId): string[];
+    getServiceDatesByTrip(trip: QualifiedEntityId): string[];
+    updateRealtime(input: {
+        kind: GTFSRealtimeFeedConfig["kind"];
+        data: Buffer | Buffer[];
+        targetFeedId: string;
+        sourceId: string;
+    }): void;
+    updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[]): Promise<void>;
     getRealtimeTripUpdates(filter?: RealtimeFilter): RealtimeTripUpdate[];
     getRealtimeVehiclePositions(filter?: RealtimeFilter): RealtimeVehiclePosition[];
     getRealtimeAlerts(filter?: RealtimeFilter): RealtimeAlert[];
-    clearRealtime(feed_id?: string): void;
+    clearRealtime(filter?: {
+        targetFeedId?: string;
+        sourceId?: string;
+    }): void;
     private download;
 }
