@@ -133,6 +133,8 @@ export interface GTFSFeedConfig {
     id: string;
     url: string;
     headers?: Record<string, string>;
+    /** Path of a nested GTFS ZIP inside the downloaded archive. */
+    archiveEntry?: string;
 }
 export interface GTFSStaticLoadResult {
     id: string;
@@ -340,8 +342,16 @@ export interface RealtimeVehiclePosition {
     congestion_level: CongestionLevel | null;
     occupancy_status: OccupancyStatus | null;
     occupancy_percentage: number | null;
+    multi_carriage_details: RealtimeCarriageDetails[];
     feed_id: string;
     source_id: string;
+}
+export interface RealtimeCarriageDetails {
+    id: string;
+    label: string;
+    occupancy_status: OccupancyStatus | null;
+    occupancy_percentage: number | null;
+    carriage_sequence: number | null;
 }
 export interface RealtimeAlert {
     update_id: string;
@@ -382,6 +392,8 @@ export interface ProgressInfo {
     percent: number;
     speed?: number;
     eta?: number;
+    /** Bytes for transport/parser work, items for derived-record work. */
+    unit?: "bytes" | "items";
 }
 export interface GTFSOptions {
     logger?: (msg: string) => void;

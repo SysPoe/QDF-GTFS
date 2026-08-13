@@ -5,6 +5,7 @@ import { createRequire } from 'module';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import * as crypto from 'crypto';
+import { inflateRawSync } from 'zlib';
 import {
     Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
@@ -75,6 +76,128 @@ function formatDuration(seconds: number): string {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
+function readVarint(buffer: Buffer, cursor: { offset: number }): number {
+    let value = 0, shift = 0;
+    while (cursor.offset < buffer.length && shift < 53) {
+        const byte = buffer[cursor.offset++];
+        value += (byte & 0x7f) * 2 ** shift;
+        if ((byte & 0x80) === 0) return value;
+        shift += 7;
+    }
+    throw new Error('Invalid GTFS-RT protobuf varint');
+}
+
+function protobufMessages(buffer: Buffer, fieldNumber: number): Buffer[] {
+    const result: Buffer[] = [], cursor = { offset: 0 };
+    while (cursor.offset < buffer.length) {
+        const tag = readVarint(buffer, cursor), field = Math.floor(tag / 8), wire = tag & 7;
+        if (wire === 0) readVarint(buffer, cursor);
+        else if (wire === 1) cursor.offset += 8;
+        else if (wire === 2) {
+            const length = readVarint(buffer, cursor), end = cursor.offset + length;
+            if (end > buffer.length) throw new Error('Truncated GTFS-RT protobuf field');
+            if (field === fieldNumber) result.push(buffer.subarray(cursor.offset, end));
+            cursor.offset = end;
+        } else if (wire === 5) cursor.offset += 4;
+        else throw new Error(`Unsupported GTFS-RT protobuf wire type ${wire}`);
+    }
+    return result;
+}
+
+function protobufScalar(buffer: Buffer, fieldNumber: number): number | null {
+    const cursor = { offset: 0 };
+    while (cursor.offset < buffer.length) {
+        const tag = readVarint(buffer, cursor), field = Math.floor(tag / 8), wire = tag & 7;
+        if (wire === 0) {
+            const value = readVarint(buffer, cursor);
+            if (field === fieldNumber) return value;
+        } else if (wire === 1) cursor.offset += 8;
+        else if (wire === 2) {
+            const length = readVarint(buffer, cursor);
+            cursor.offset += length;
+        }
+        else if (wire === 5) cursor.offset += 4;
+        else throw new Error(`Unsupported GTFS-RT protobuf wire type ${wire}`);
+    }
+    return null;
+}
+
+function protobufString(buffer: Buffer, fieldNumber: number): string {
+    return protobufMessages(buffer, fieldNumber)[0]?.toString('utf8') ?? '';
+}
+
+/** Parse experimental GTFS-RT VehiclePosition.multi_carriage_details (field 11). */
+export function parseGtfsRtMultiCarriageDetails(
+    feed: Buffer,
+): Map<string, import('./types.js').RealtimeCarriageDetails[]> {
+    const result = new Map<string, import('./types.js').RealtimeCarriageDetails[]>();
+    for (const entity of protobufMessages(feed, 2)) {
+        const id = protobufString(entity, 1);
+        const vehicle = protobufMessages(entity, 4)[0];
+        if (!id || !vehicle) continue;
+        const carriages = protobufMessages(vehicle, 11).map((carriage) => ({
+            id: protobufString(carriage, 1),
+            label: protobufString(carriage, 2),
+            occupancy_status: protobufScalar(carriage, 3) as import('./types.js').OccupancyStatus | null,
+            occupancy_percentage: protobufScalar(carriage, 4),
+            carriage_sequence: protobufScalar(carriage, 5),
+        }));
+        if (carriages.length) result.set(id, carriages);
+    }
+    return result;
+}
+
+/** Extract one file from a ZIP without adding a second ZIP dependency. */
+export function extractZipEntry(archive: Buffer, requestedEntry: string): Buffer {
+    const entry = requestedEntry.replace(/^\/+/, '');
+    if (!entry || entry.includes('\\')) throw new Error(`Invalid ZIP archive entry '${requestedEntry}'`);
+
+    // Locate EOCD in the final 64 KiB plus its fixed-size header.
+    const firstPossibleEocd = Math.max(0, archive.length - 65_557);
+    let eocd = -1;
+    for (let offset = archive.length - 22; offset >= firstPossibleEocd; offset--) {
+        if (archive.readUInt32LE(offset) === 0x06054b50) {
+            eocd = offset;
+            break;
+        }
+    }
+    if (eocd < 0) throw new Error('Downloaded file is not a valid ZIP archive (end record missing)');
+
+    const entryCount = archive.readUInt16LE(eocd + 10);
+    const centralOffset = archive.readUInt32LE(eocd + 16);
+    let offset = centralOffset;
+    for (let index = 0; index < entryCount; index++) {
+        if (offset + 46 > archive.length || archive.readUInt32LE(offset) !== 0x02014b50)
+            throw new Error('Downloaded ZIP has an invalid central directory');
+        const compression = archive.readUInt16LE(offset + 10);
+        const compressedSize = archive.readUInt32LE(offset + 20);
+        const uncompressedSize = archive.readUInt32LE(offset + 24);
+        const nameLength = archive.readUInt16LE(offset + 28);
+        const extraLength = archive.readUInt16LE(offset + 30);
+        const commentLength = archive.readUInt16LE(offset + 32);
+        const localOffset = archive.readUInt32LE(offset + 42);
+        const name = archive.subarray(offset + 46, offset + 46 + nameLength).toString('utf8').replace(/^\/+/, '');
+
+        if (name === entry) {
+            if (localOffset + 30 > archive.length || archive.readUInt32LE(localOffset) !== 0x04034b50)
+                throw new Error(`ZIP archive entry '${entry}' has an invalid local header`);
+            const localNameLength = archive.readUInt16LE(localOffset + 26);
+            const localExtraLength = archive.readUInt16LE(localOffset + 28);
+            const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+            const compressed = archive.subarray(dataStart, dataStart + compressedSize);
+            if (compressed.length !== compressedSize)
+                throw new Error(`ZIP archive entry '${entry}' is truncated`);
+            const result = compression === 0 ? Buffer.from(compressed) : compression === 8 ? inflateRawSync(compressed) : null;
+            if (!result) throw new Error(`ZIP archive entry '${entry}' uses unsupported compression method ${compression}`);
+            if (result.length !== uncompressedSize)
+                throw new Error(`ZIP archive entry '${entry}' has an invalid uncompressed size`);
+            return result;
+        }
+        offset += 46 + nameLength + extraLength + commentLength;
+    }
+    throw new Error(`ZIP archive entry '${entry}' was not found`);
+}
+
 export class GTFS {
     private addonInstance: any;
     private logger?: (msg: string) => void;
@@ -93,6 +216,7 @@ export class GTFS {
     private serviceDatesSets: Map<string, Set<string>> | null = null;
     private serviceIdsByDateCache: Map<string, QualifiedEntityId[]> | null = null;
     private tripsByServiceIdCache: Map<string, Trip[]> | null = null;
+    private realtimeCarriages = new Map<string, import('./types.js').RealtimeCarriageDetails[]>();
 
     public actions: GTFSActions = {
         mergeStops: (targetStopId: string, sourceStopIds: string[], feed_id: string) => {
@@ -121,7 +245,7 @@ export class GTFS {
 
     private showProgress(task: string, current: number, total: number, speed: number, eta: number) {
         const now = Date.now();
-        if (now - this.lastProgressUpdate < 100 && current < total) {
+        if (now - this.lastProgressUpdate < 100 && (total <= 0 || current < total)) {
             return;
         }
         this.lastProgressUpdate = now;
@@ -157,6 +281,7 @@ export class GTFS {
         const buffers: Buffer[] = [];
 		const results: GTFSStaticLoadResult[] = [];
 		const pendingCacheWrites: { cacheDir: string; cachePath: string; buffer: Buffer }[] = [];
+		const sourceBuffers = new Map<string, { buffer: Buffer; source: GTFSStaticLoadResult["source"] }>();
 
         for (const config of feedList) {
             let buffer: Buffer | null = null;
@@ -164,23 +289,32 @@ export class GTFS {
 			let loadedFrom: GTFSStaticLoadResult["source"] = "network";
             const cacheDir = this.cacheDir || './cache';
             let cachePath = '';
+			const sourceKey = `${config.url}|${JSON.stringify(config.headers ?? {})}`;
+			const shared = sourceBuffers.get(sourceKey);
+			if (shared) {
+				buffer = shared.buffer;
+				loadedFrom = shared.source;
+				if (this.logger) this.logger(`Reusing downloaded GTFS archive for ${config.id}`);
+			}
 
-            if (this.cache) {
-                const keySource = config.headers ? `${config.url}|${JSON.stringify(config.headers)}` : config.url;
-                const hash = crypto.createHash('md5').update(keySource).digest('hex');
+			if (!buffer && this.cache) {
+				const hash = crypto.createHash('md5').update(sourceKey).digest('hex');
                 cachePath = path.join(cacheDir, hash);
+				const legacyHash = crypto.createHash('md5').update(`${sourceKey}|${config.archiveEntry ?? ''}`).digest('hex');
+				const legacyCachePath = path.join(cacheDir, legacyHash);
+				const readableCachePath = fs.existsSync(cachePath) ? cachePath : legacyCachePath;
 
-                if (fs.existsSync(cachePath)) {
-                    const stats = fs.statSync(cachePath);
+				if (fs.existsSync(readableCachePath)) {
+					const stats = fs.statSync(readableCachePath);
                     const age = Date.now() - stats.mtimeMs;
                     try {
-						staleBuffer = fs.readFileSync(cachePath);
+						staleBuffer = fs.readFileSync(readableCachePath);
 					} catch (e) {
 						if (this.logger) this.logger(`Failed to read cache: ${e}`);
 					}
 
                     if (age < this.cacheMaxAgeMs && staleBuffer) {
-                        if (this.logger) this.logger(`Loading from cache: ${cachePath}`);
+						if (this.logger) this.logger(`Loading from cache: ${readableCachePath}`);
 						buffer = staleBuffer;
 						loadedFrom = "fresh-cache";
                     } else {
@@ -198,7 +332,10 @@ export class GTFS {
                     }
                 }
 				try {
-					buffer = await this.download(config.url, "Downloading", true, config.headers);
+					const task = `Downloading GTFS (${config.id})`;
+					this.lastProgressUpdate = 0;
+					this.showProgress(`Connecting to GTFS (${config.id})`, 0, 0, 0, 0);
+					buffer = await this.download(config.url, task, true, config.headers);
 					loadedFrom = "network";
 				} catch (error) {
 					if (!this.staleIfError || !staleBuffer) throw error;
@@ -211,7 +348,16 @@ export class GTFS {
 					pendingCacheWrites.push({ cacheDir, cachePath, buffer });
                 }
             }
-            buffers.push(buffer as Buffer);
+			if (!sourceBuffers.has(sourceKey)) sourceBuffers.set(sourceKey, { buffer: buffer as Buffer, source: loadedFrom });
+			if (config.archiveEntry) {
+				this.lastProgressUpdate = 0;
+				this.showProgress(`Extracting GTFS (${config.id})`, 0, 0, 0, 0);
+				const extracted = extractZipEntry(buffer as Buffer, config.archiveEntry);
+				this.showProgress(`Extracting GTFS (${config.id})`, extracted.length, extracted.length, 0, 0);
+				buffers.push(extracted);
+			} else {
+				buffers.push(buffer as Buffer);
+			}
 			results.push({ id: config.id, source: loadedFrom });
         }
 
@@ -439,6 +585,13 @@ export class GTFS {
         targetFeedId: string;
         sourceId: string;
     }): void {
+		if (input.kind === "vehicles") {
+			for (const key of this.realtimeCarriages.keys()) if (key.startsWith(`${input.sourceId}\0`)) this.realtimeCarriages.delete(key);
+			const buffers = Array.isArray(input.data) ? input.data : [input.data];
+			for (const buffer of buffers) for (const [entityId, carriages] of parseGtfsRtMultiCarriageDetails(buffer)) {
+				this.realtimeCarriages.set(`${input.sourceId}\0${entityId}`, carriages);
+			}
+		}
         this.addonInstance.updateRealtime(
             input.kind === "alerts" ? input.data : [],
             input.kind === "trip-updates" ? input.data : [],
@@ -465,7 +618,10 @@ export class GTFS {
     }
 
     getRealtimeVehiclePositions(filter?: RealtimeFilter): RealtimeVehiclePosition[] {
-        return this.addonInstance.getRealtimeVehiclePositions(filter || {});
+		return this.addonInstance.getRealtimeVehiclePositions(filter || {}).map((vehicle: RealtimeVehiclePosition) => ({
+			...vehicle,
+			multi_carriage_details: this.realtimeCarriages.get(`${vehicle.source_id}\0${vehicle.update_id}`) ?? [],
+		}));
     }
 
     getRealtimeAlerts(filter?: RealtimeFilter): RealtimeAlert[] {
@@ -474,18 +630,32 @@ export class GTFS {
 
     clearRealtime(filter: { targetFeedId?: string; sourceId?: string } = {}): void {
         this.addonInstance.clearRealtime(filter.targetFeedId || "", filter.sourceId || "");
+		if (filter.sourceId) {
+			for (const key of this.realtimeCarriages.keys()) if (key.startsWith(`${filter.sourceId}\0`)) this.realtimeCarriages.delete(key);
+		} else this.realtimeCarriages.clear();
     }
 
-    private download(url: string, taskName: string = "Downloading", showProgressBar: boolean = true, headers?: Record<string, string>, redirects: number = 0): Promise<Buffer> {
+    private download(
+        url: string,
+        taskName: string = "Downloading",
+        showProgressBar: boolean = true,
+        headers?: Record<string, string>,
+        redirects: number = 0,
+        connectionAttempt: number = 0,
+    ): Promise<Buffer> {
         return new Promise((resolve, reject) => {
+            let connectionTimer: NodeJS.Timeout | undefined;
+            let receivedResponse = false;
             const onResponse = (res: any) => {
+                receivedResponse = true;
+                if (connectionTimer) clearTimeout(connectionTimer);
                 res.on('error', (err: Error) => reject(err));
                 if (res.statusCode !== 200) {
 					if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
 						if (redirects >= 5) { reject(new Error(`Too many redirects downloading ${url}`)); return; }
                         if (this.logger) this.logger(`Redirected to ${res.headers.location}`);
 						res.resume();
-						this.download(new URL(res.headers.location as string, url).toString(), taskName, showProgressBar, headers, redirects + 1).then(resolve).catch(reject);
+						this.download(new URL(res.headers.location as string, url).toString(), taskName, showProgressBar, headers, redirects + 1, connectionAttempt).then(resolve).catch(reject);
                         return;
                     }
 					res.resume();
@@ -497,6 +667,8 @@ export class GTFS {
                 let current = 0;
                 const data: Buffer[] = [];
                 const startTime = Date.now();
+				this.lastProgressUpdate = 0;
+				this.showProgress(taskName, 0, total, 0, 0);
 
                 res.on('data', (chunk: Buffer) => {
                     data.push(chunk);
@@ -519,7 +691,9 @@ export class GTFS {
                         const elapsed = (now - startTime) / 1000;
                         const speed = elapsed > 0 ? current / elapsed : 0;
                         this.lastProgressUpdate = 0;
-                        this.showProgress(taskName, current, total, speed, 0);
+						// A number of official feeds use chunked transfer encoding. Once the
+						// stream ends, its downloaded byte count is the actual total.
+						this.showProgress(taskName, current, total || current, speed, 0);
                         if (this.ansi && process.stdout.isTTY) process.stdout.write('\n');
                     }
                     resolve(Buffer.concat(data))
@@ -528,10 +702,29 @@ export class GTFS {
 
             try {
                 const client = url.startsWith('https') ? https : http;
-                const req = headers ? client.get(url, { headers }, onResponse) : client.get(url, onResponse);
-                req.on('error', (err: Error) => reject(err));
+				const req = client.get(url, {
+					headers,
+					// These feeds all publish IPv4 endpoints. Avoid Node waiting on an
+					// unroutable IPv6 result before trying the usable address.
+					family: 4,
+				}, onResponse);
+				connectionTimer = setTimeout(
+					() => req.destroy(new Error(`Timed out connecting to ${url}`)),
+					Math.min(this.requestTimeoutMs, 10_000),
+				);
+				req.on('error', (err: Error) => {
+					if (connectionTimer) clearTimeout(connectionTimer);
+					if (!receivedResponse && connectionAttempt < 2) {
+						this.download(url, taskName, showProgressBar, headers, redirects, connectionAttempt + 1)
+							.then(resolve)
+							.catch(reject);
+						return;
+					}
+					reject(err);
+				});
 				req.setTimeout(this.requestTimeoutMs, () => req.destroy(new Error(`Timed out downloading ${url}`)));
             } catch (e) {
+				if (connectionTimer) clearTimeout(connectionTimer);
                 reject(e);
             }
         });

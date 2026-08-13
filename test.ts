@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
-import { GTFS, GTFSMergeStrategy, type Shape } from "./index.js";
+import { extractZipEntry, GTFS, GTFSMergeStrategy, parseGtfsRtMultiCarriageDetails, type Shape } from "./index.js";
 
 const crcTable = Array.from({ length: 256 }, (_, value) => {
 	let crc = value;
@@ -211,6 +211,26 @@ function makeTripUpdateFeed(updateId: string, tripId: string): Buffer {
 	return Buffer.concat([protobufField(1, header), protobufField(2, entity)]);
 }
 
+function makeVehicleFeedWithCarriages(): Buffer {
+	const carriage = (id: string, label: string, occupancy: number, percentage: number, sequence: number) => Buffer.concat([
+		protobufField(1, id), protobufField(2, label),
+		Buffer.from([(3 << 3) | 0, occupancy, (4 << 3) | 0, percentage, (5 << 3) | 0, sequence]),
+	]);
+	const vehicle = Buffer.concat([
+		protobufField(11, carriage("VL131-A", "A", 1, 35, 1)),
+		protobufField(11, carriage("VL131-B", "B", 2, 70, 2)),
+	]);
+	const entity = Buffer.concat([protobufField(1, "vehicle-1"), protobufField(4, vehicle)]);
+	return Buffer.concat([protobufField(1, protobufField(1, "2.0")), protobufField(2, entity)]);
+}
+
+function testMultiCarriageDetails() {
+	assert.deepEqual(parseGtfsRtMultiCarriageDetails(makeVehicleFeedWithCarriages()).get("vehicle-1"), [
+		{ id: "VL131-A", label: "A", occupancy_status: 1, occupancy_percentage: 35, carriage_sequence: 1 },
+		{ id: "VL131-B", label: "B", occupancy_status: 2, occupancy_percentage: 70, carriage_sequence: 2 },
+	]);
+}
+
 async function testQualifiedIdentityAndRealtimeProvenance() {
 	const gtfs = new GTFS();
 	await gtfs.loadFromBuffers(
@@ -295,6 +315,28 @@ function testFeedIdentityValidation() {
 	assert.throws(() => gtfs.loadFromBuffers([Buffer.alloc(0), Buffer.alloc(0)], ["same", "same"]), /unique/);
 }
 
+function testNestedArchiveExtraction() {
+	const inner = createZip({ "agency.txt": "agency_name,agency_url,agency_timezone\nV/Line,https://vline.com.au,Australia/Melbourne\n" });
+	// createZip accepts strings; rebuild the stored outer entry byte-for-byte for this binary fixture.
+	const binaryOuter = (() => {
+		const name = Buffer.from("1/google_transit.zip"), checksum = crc32(inner);
+		const local = Buffer.alloc(30), central = Buffer.alloc(46), end = Buffer.alloc(22);
+		local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt32LE(checksum, 14);
+		local.writeUInt32LE(inner.length, 18); local.writeUInt32LE(inner.length, 22); local.writeUInt16LE(name.length, 26);
+		central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
+		central.writeUInt32LE(checksum, 16); central.writeUInt32LE(inner.length, 20); central.writeUInt32LE(inner.length, 24);
+		central.writeUInt16LE(name.length, 28); central.writeUInt32LE(0, 42);
+		const centralOffset = local.length + name.length + inner.length;
+		end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10);
+		end.writeUInt32LE(central.length + name.length, 12); end.writeUInt32LE(centralOffset, 16);
+		return Buffer.concat([local, name, inner, central, name, end]);
+	})();
+	assert.deepEqual(extractZipEntry(binaryOuter, "1/google_transit.zip"), inner);
+	assert.throws(() => extractZipEntry(binaryOuter, "2/google_transit.zip"), /was not found/);
+	assert.throws(() => extractZipEntry(Buffer.from("not a zip"), "1/google_transit.zip"), /not a valid ZIP/);
+}
+
+
 function makeLargeShapeFeed(pointCount: number): Buffer {
 	const rows = new Array<string>(pointCount + 1);
 	rows[0] = shapesHeader;
@@ -352,5 +394,7 @@ await testShapeFiltersAndMergeStrategies();
 await testQualifiedIdentityAndRealtimeProvenance();
 await testTripStopTimeIndexAcrossFeeds();
 testFeedIdentityValidation();
+testNestedArchiveExtraction();
+testMultiCarriageDetails();
 await testIndexedLookupScaling();
 console.log("All QDF-GTFS tests passed.");

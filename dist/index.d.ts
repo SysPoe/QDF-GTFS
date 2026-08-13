@@ -1,5 +1,9 @@
 import { Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSActions, QualifiedEntityId, RealtimeFilter } from './types.js';
 export * from './types.js';
+/** Parse experimental GTFS-RT VehiclePosition.multi_carriage_details (field 11). */
+export declare function parseGtfsRtMultiCarriageDetails(feed: Buffer): Map<string, import('./types.js').RealtimeCarriageDetails[]>;
+/** Extract one file from a ZIP without adding a second ZIP dependency. */
+export declare function extractZipEntry(archive: Buffer, requestedEntry: string): Buffer;
 export declare class GTFS {
     private addonInstance;
     private logger?;
@@ -18,6 +22,7 @@ export declare class GTFS {
     private serviceDatesSets;
     private serviceIdsByDateCache;
     private tripsByServiceIdCache;
+    private realtimeCarriages;
     actions: GTFSActions;
     constructor(options?: GTFSOptions);
     private showProgress;
