@@ -168,8 +168,8 @@ function makeCollisionFeed(name: string): Buffer {
 			"route_id,agency_id,route_short_name,route_type\n" +
 			"shared-route,shared-agency,R,2\n",
 		"trips.txt":
-			"route_id,service_id,trip_id,shape_id\n" +
-			"shared-route,shared-service,shared-trip,shared-shape\n",
+			"route_id,service_id,trip_id,shape_id,block_id\n" +
+			"shared-route,shared-service,shared-trip,shared-shape,shared-block\n",
 		"stops.txt":
 			"stop_id,stop_name,stop_lat,stop_lon\n" +
 			`shared-stop,${name} Stop,-27.0,153.0\n`,
@@ -239,6 +239,9 @@ async function testQualifiedIdentityAndRealtimeProvenance() {
 	);
 
 	assert.equal(gtfs.getTrips({ trip_id: "shared-trip" }).length, 2);
+	assert.equal(gtfs.getTrips({ route_id: "shared-route" }).length, 2);
+	assert.equal(gtfs.getTrips({ service_id: "shared-service", feed_id: "feed-a" }).length, 1);
+	assert.equal(gtfs.getTrips({ block_id: "shared-block", feed_id: "feed-b" }).length, 1);
 	assert.equal(gtfs.getStops({ stop_id: "shared-stop" }).length, 2);
 	assert.equal(gtfs.getRoutes({ route_id: "shared-route" }).length, 2);
 	assert.equal(gtfs.getStopTimes({ trip_id: "shared-trip" }).length, 2);
