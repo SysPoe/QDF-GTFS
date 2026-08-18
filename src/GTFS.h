@@ -346,6 +346,11 @@ public:
     std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_trip_id; // index into stop_times
 
     std::unordered_map<std::string, std::unordered_map<std::string, Trip>> trips;
+    // Secondary indexes keep common trip searches out of the full feed map.
+    // Pointers are stable because unordered_map stores trips in node objects.
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<const Trip*>>> trips_by_route_id;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<const Trip*>>> trips_by_service_id;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<const Trip*>>> trips_by_block_id;
     std::vector<Shape> shapes;
     // Each range is one feed-qualified shape. A bare shape_id can therefore
     // resolve to several ranges without scanning the full shape array.
@@ -366,6 +371,9 @@ public:
         stop_times_by_stop_id.clear();
         stop_times_by_trip_id.clear();
         trips.clear();
+        trips_by_route_id.clear();
+        trips_by_service_id.clear();
+        trips_by_block_id.clear();
         shapes.clear();
         shape_ranges_by_id.clear();
         feed_info.clear();

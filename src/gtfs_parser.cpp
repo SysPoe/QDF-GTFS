@@ -1255,8 +1255,8 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
         data.stop_times_by_trip_id[data.stop_times[i].trip_id].push_back(i);
     }
 
-    // Build O(1) trip lookup index: key = (feed_id_intern << 32) | trip_id_intern
-    if (log) log("Building trip intern index...");
+    // Build trip indexes after parsing, when the feed maps will no longer mutate.
+    if (log) log("Building trip query indexes...");
     for (const auto& [fid_str, feed_map] : data.trips) {
         uint32_t fid_int = data.string_pool.get_id(fid_str);
         for (const auto& [tid_str, trip] : feed_map) {
@@ -1265,6 +1265,9 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
                 uint64_t key = (static_cast<uint64_t>(fid_int) << 32) | tid_int;
                 data.trip_by_intern_id[key] = &trip;
             }
+            data.trips_by_route_id[fid_str][trip.route_id].push_back(&trip);
+            data.trips_by_service_id[fid_str][trip.service_id].push_back(&trip);
+            if (trip.block_id.has_value()) data.trips_by_block_id[fid_str][trip.block_id.value()].push_back(&trip);
         }
     }
 

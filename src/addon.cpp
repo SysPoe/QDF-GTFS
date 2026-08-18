@@ -1214,10 +1214,34 @@ Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
             }
         }
     } else {
-        for (const auto& [fid, feed_map] : data.trips) {
-            if (has_feed_id && fid != f_feed_id) continue;
-            for (const auto& [id, t] : feed_map) {
-                if (check_trip(t)) matches.push_back(&t);
+        const auto collect_indexed = [&](const auto& index, const std::string& value) {
+            if (has_feed_id) {
+                auto feed_it = index.find(f_feed_id);
+                if (feed_it == index.end()) return;
+                auto value_it = feed_it->second.find(value);
+                if (value_it == feed_it->second.end()) return;
+                for (const auto* trip : value_it->second) if (check_trip(*trip)) matches.push_back(trip);
+                return;
+            }
+            for (const auto& [feed_id, values] : index) {
+                auto value_it = values.find(value);
+                if (value_it == values.end()) continue;
+                for (const auto* trip : value_it->second) if (check_trip(*trip)) matches.push_back(trip);
+            }
+        };
+
+        if (has_block_id) {
+            collect_indexed(data.trips_by_block_id, f_block_id);
+        } else if (has_route_id) {
+            collect_indexed(data.trips_by_route_id, f_route_id);
+        } else if (has_service_id) {
+            collect_indexed(data.trips_by_service_id, f_service_id);
+        } else {
+            for (const auto& [fid, feed_map] : data.trips) {
+                if (has_feed_id && fid != f_feed_id) continue;
+                for (const auto& [id, t] : feed_map) {
+                    if (check_trip(t)) matches.push_back(&t);
+                }
             }
         }
     }
