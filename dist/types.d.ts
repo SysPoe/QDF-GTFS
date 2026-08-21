@@ -56,6 +56,14 @@ export declare enum BikesAllowed {
     Allowed = 1,
     NotAllowed = 2
 }
+export declare enum TransferType {
+    Recommended = 0,
+    Timed = 1,
+    MinimumTime = 2,
+    NotPossible = 3,
+    InSeat = 4,
+    NoInSeat = 5
+}
 export declare enum TripScheduleRelationship {
     SCHEDULED = 0,
     ADDED = 1,
@@ -244,6 +252,17 @@ export interface Trip {
     bikes_allowed: BikesAllowed | null;
     feed_id: string;
 }
+export interface Transfer {
+    from_stop_id: string | null;
+    to_stop_id: string | null;
+    from_route_id: string | null;
+    to_route_id: string | null;
+    from_trip_id: string | null;
+    to_trip_id: string | null;
+    transfer_type: TransferType;
+    min_transfer_time: number | null;
+    feed_id: string;
+}
 export interface Shape {
     shape_id: string;
     shape_pt_lat: number;
@@ -374,6 +393,16 @@ export interface TripQuery {
     date?: string;
     start_time?: number | string;
     end_time?: number | string;
+    feed_id?: string;
+}
+export interface TransferQuery {
+    from_stop_id?: string;
+    to_stop_id?: string;
+    from_route_id?: string;
+    to_route_id?: string;
+    from_trip_id?: string;
+    to_trip_id?: string;
+    transfer_type?: TransferType | number;
     feed_id?: string;
 }
 export interface StopTimeQuery {

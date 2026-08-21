@@ -7,10 +7,10 @@ import { fileURLToPath } from 'url';
 import * as crypto from 'crypto';
 import { inflateRawSync } from 'zlib';
 import {
-    Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate,
+    Agency, Route, Stop, StopTime, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
     GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSActions, QualifiedEntityId,
-    RealtimeFilter
+    RealtimeFilter, TransferQuery
 } from './types.js';
 
 export * from './types.js';
@@ -39,6 +39,7 @@ try {
                     getStops() { return []; }
                     getStopTimes() { return []; }
                     getTrips() { return []; }
+                    getTransfers() { return []; }
                     getShapes() { return []; }
                     getCalendars() { return []; }
                     getCalendarDates() { return []; }
@@ -399,7 +400,7 @@ export class GTFS {
             this.showProgress(task, current, total, speed, eta);
         };
 
-        const ALL_FILES = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','shapes.txt','feed_info.txt'];
+        const ALL_FILES = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','transfers.txt','shapes.txt','feed_info.txt'];
         let effectiveFiles: string[] = this.filesToLoad ? [...this.filesToLoad] : [];
         if (this.skipStopTimes && effectiveFiles.length === 0) {
             effectiveFiles = ALL_FILES.filter(f => f !== 'stop_times.txt');
@@ -555,6 +556,10 @@ export class GTFS {
 
     getTrips(filter?: TripQuery | Partial<Trip>): Trip[] {
         return this.addonInstance.getTrips(filter || {});
+    }
+
+    getTransfers(filter?: TransferQuery | Partial<Transfer>): Transfer[] {
+        return this.addonInstance.getTransfers(filter || {});
     }
 
     getShapes(filter?: Partial<Shape>): Shape[] {

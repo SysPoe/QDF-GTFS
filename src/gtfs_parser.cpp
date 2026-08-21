@@ -457,6 +457,73 @@ size_t parse_trips(GTFSData& data, const char* content_data, size_t content_size
     return count;
 }
 
+size_t parse_transfers(GTFSData& data, const char* content_data, size_t content_size, int, const std::string& feed_id, const std::function<void(size_t)>& on_progress = nullptr) {
+    const char* ptr = content_data;
+    const char* end = content_data + content_size;
+    const char* line_start; size_t line_len;
+
+    ptr = advance_line(ptr, end, line_start, line_len);
+    if (line_len == 0) return 0;
+    std::string header_str(line_start, line_len);
+    remove_bom(header_str);
+
+    auto headers = parse_csv_line(header_str);
+    int from_stop_idx = get_col_index(headers, "from_stop_id");
+    int to_stop_idx = get_col_index(headers, "to_stop_id");
+    int from_route_idx = get_col_index(headers, "from_route_id");
+    int to_route_idx = get_col_index(headers, "to_route_id");
+    int from_trip_idx = get_col_index(headers, "from_trip_id");
+    int to_trip_idx = get_col_index(headers, "to_trip_id");
+    int type_idx = get_col_index(headers, "transfer_type");
+    int min_time_idx = get_col_index(headers, "min_transfer_time");
+
+    size_t bytes_read = line_len + 1;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            on_progress(bytes);
+            last_report = bytes;
+        }
+    };
+    report_progress(bytes_read);
+
+    data.transfers.reserve(data.transfers.size() + content_size / 100 + 16);
+    size_t count = 0;
+    while (ptr < end) {
+        ptr = advance_line(ptr, end, line_start, line_len);
+        bytes_read += line_len + 1;
+        if (line_len == 0) { report_progress(bytes_read); continue; }
+        std::string line(line_start, line_len);
+        auto row = parse_csv_line(line);
+        Transfer transfer;
+        transfer.feed_id = feed_id;
+        std::string tmp;
+
+        tmp = get_val(row, from_stop_idx);
+        if (!tmp.empty()) transfer.from_stop_id = tmp;
+        tmp = get_val(row, to_stop_idx);
+        if (!tmp.empty()) transfer.to_stop_id = tmp;
+        tmp = get_val(row, from_route_idx);
+        if (!tmp.empty()) transfer.from_route_id = tmp;
+        tmp = get_val(row, to_route_idx);
+        if (!tmp.empty()) transfer.to_route_id = tmp;
+        tmp = get_val(row, from_trip_idx);
+        if (!tmp.empty()) transfer.from_trip_id = tmp;
+        tmp = get_val(row, to_trip_idx);
+        if (!tmp.empty()) transfer.to_trip_id = tmp;
+        tmp = get_val(row, type_idx);
+        if (!tmp.empty()) transfer.transfer_type = get_int(row, type_idx);
+        tmp = get_val(row, min_time_idx);
+        if (!tmp.empty()) transfer.min_transfer_time = get_int(row, min_time_idx);
+
+        data.transfers.push_back(std::move(transfer));
+        count++;
+        report_progress(bytes_read);
+    }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read);
+    return count;
+}
+
 size_t parse_stops(GTFSData& data, const char* content_data, size_t content_size, int merge_strategy, const std::string& feed_id, const std::function<void(size_t)>& on_progress = nullptr) {
     const char* ptr = content_data;
     const char* end = content_data + content_size;
@@ -989,7 +1056,7 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
     // Build effective file filter (empty = load all)
     const std::vector<std::string> all_target_files = {
         "agency.txt", "routes.txt", "trips.txt", "stops.txt", "stop_times.txt",
-        "calendar.txt", "calendar_dates.txt", "shapes.txt", "feed_info.txt"
+        "calendar.txt", "calendar_dates.txt", "transfers.txt", "shapes.txt", "feed_info.txt"
     };
     const std::vector<std::string>& target_files = files_to_load.empty() ? all_target_files : files_to_load;
 
@@ -1094,6 +1161,8 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
             futures.push_back(std::async(std::launch::async, process_file, parse_calendar, "calendar.txt"));
         if (file_contents.count("calendar_dates.txt"))
             futures.push_back(std::async(std::launch::async, process_file, parse_calendar_dates, "calendar_dates.txt"));
+        if (file_contents.count("transfers.txt"))
+            futures.push_back(std::async(std::launch::async, process_file, parse_transfers, "transfers.txt"));
         if (file_contents.count("shapes.txt"))
             futures.push_back(std::async(std::launch::async, process_shapes_file, "shapes.txt"));
         if (file_contents.count("feed_info.txt"))

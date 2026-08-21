@@ -1,4 +1,4 @@
-import { Agency, Route, Stop, StopTime, FeedInfo, Trip, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSActions, QualifiedEntityId, RealtimeFilter } from './types.js';
+import { Agency, Route, Stop, StopTime, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery } from './types.js';
 export * from './types.js';
 /** Parse experimental GTFS-RT VehiclePosition.multi_carriage_details (field 11). */
 export declare function parseGtfsRtMultiCarriageDetails(feed: Buffer): Map<string, import('./types.js').RealtimeCarriageDetails[]>;
@@ -38,6 +38,7 @@ export declare class GTFS {
     private getServiceDatesMap;
     private getTripsByServiceId;
     getTrips(filter?: TripQuery | Partial<Trip>): Trip[];
+    getTransfers(filter?: TransferQuery | Partial<Transfer>): Transfer[];
     getShapes(filter?: Partial<Shape>): Shape[];
     getCalendars(filter?: Partial<Calendar>): Calendar[];
     getCalendarDates(filter?: Partial<CalendarDate>): CalendarDate[];

@@ -66,6 +66,15 @@ export var BikesAllowed;
     BikesAllowed[BikesAllowed["Allowed"] = 1] = "Allowed";
     BikesAllowed[BikesAllowed["NotAllowed"] = 2] = "NotAllowed";
 })(BikesAllowed || (BikesAllowed = {}));
+export var TransferType;
+(function (TransferType) {
+    TransferType[TransferType["Recommended"] = 0] = "Recommended";
+    TransferType[TransferType["Timed"] = 1] = "Timed";
+    TransferType[TransferType["MinimumTime"] = 2] = "MinimumTime";
+    TransferType[TransferType["NotPossible"] = 3] = "NotPossible";
+    TransferType[TransferType["InSeat"] = 4] = "InSeat";
+    TransferType[TransferType["NoInSeat"] = 5] = "NoInSeat";
+})(TransferType || (TransferType = {}));
 // Realtime Enums
 export var TripScheduleRelationship;
 (function (TripScheduleRelationship) {

@@ -32,6 +32,7 @@ try {
                     getStops() { return []; }
                     getStopTimes() { return []; }
                     getTrips() { return []; }
+                    getTransfers() { return []; }
                     getShapes() { return []; }
                     getCalendars() { return []; }
                     getCalendarDates() { return []; }
@@ -401,7 +402,7 @@ export class GTFS {
             const eta = speed > 0 ? remaining / speed : 0;
             this.showProgress(task, current, total, speed, eta);
         };
-        const ALL_FILES = ['agency.txt', 'routes.txt', 'trips.txt', 'stops.txt', 'stop_times.txt', 'calendar.txt', 'calendar_dates.txt', 'shapes.txt', 'feed_info.txt'];
+        const ALL_FILES = ['agency.txt', 'routes.txt', 'trips.txt', 'stops.txt', 'stop_times.txt', 'calendar.txt', 'calendar_dates.txt', 'transfers.txt', 'shapes.txt', 'feed_info.txt'];
         let effectiveFiles = this.filesToLoad ? [...this.filesToLoad] : [];
         if (this.skipStopTimes && effectiveFiles.length === 0) {
             effectiveFiles = ALL_FILES.filter(f => f !== 'stop_times.txt');
@@ -534,6 +535,9 @@ export class GTFS {
     }
     getTrips(filter) {
         return this.addonInstance.getTrips(filter || {});
+    }
+    getTransfers(filter) {
+        return this.addonInstance.getTransfers(filter || {});
     }
     getShapes(filter) {
         return this.addonInstance.getShapes(filter);

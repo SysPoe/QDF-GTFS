@@ -213,6 +213,18 @@ struct Trip {
     std::string feed_id;
 };
 
+struct Transfer {
+    std::optional<std::string> from_stop_id = std::nullopt;
+    std::optional<std::string> to_stop_id = std::nullopt;
+    std::optional<std::string> from_route_id = std::nullopt;
+    std::optional<std::string> to_route_id = std::nullopt;
+    std::optional<std::string> from_trip_id = std::nullopt;
+    std::optional<std::string> to_trip_id = std::nullopt;
+    int transfer_type = 0;
+    std::optional<int> min_transfer_time = std::nullopt;
+    std::string feed_id;
+};
+
 struct Shape {
     double shape_pt_lat;
     double shape_pt_lon;
@@ -346,6 +358,7 @@ public:
     std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_trip_id; // index into stop_times
 
     std::unordered_map<std::string, std::unordered_map<std::string, Trip>> trips;
+    std::vector<Transfer> transfers;
     // Secondary indexes keep common trip searches out of the full feed map.
     // Pointers are stable because unordered_map stores trips in node objects.
     std::unordered_map<std::string, std::unordered_map<std::string, std::vector<const Trip*>>> trips_by_route_id;
@@ -371,6 +384,7 @@ public:
         stop_times_by_stop_id.clear();
         stop_times_by_trip_id.clear();
         trips.clear();
+        transfers.clear();
         trips_by_route_id.clear();
         trips_by_service_id.clear();
         trips_by_block_id.clear();

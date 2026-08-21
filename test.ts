@@ -169,7 +169,8 @@ function makeCollisionFeed(name: string): Buffer {
 			"shared-route,shared-agency,R,2\n",
 		"trips.txt":
 			"route_id,service_id,trip_id,shape_id,block_id\n" +
-			"shared-route,shared-service,shared-trip,shared-shape,shared-block\n",
+			"shared-route,shared-service,shared-trip,shared-shape,shared-block\n" +
+			"shared-route,shared-service,next-trip,shared-shape,shared-block\n",
 		"stops.txt":
 			"stop_id,stop_name,stop_lat,stop_lon\n" +
 			`shared-stop,${name} Stop,-27.0,153.0\n`,
@@ -182,6 +183,10 @@ function makeCollisionFeed(name: string): Buffer {
 		"calendar_dates.txt":
 			"service_id,date,exception_type\n" +
 			"shared-service,20260805,2\n",
+		"transfers.txt":
+			"from_stop_id,to_stop_id,from_route_id,to_route_id,from_trip_id,to_trip_id,transfer_type,min_transfer_time\n" +
+			"shared-stop,shared-stop,shared-route,shared-route,shared-trip,next-trip,4,\n" +
+			"shared-stop,shared-stop,shared-route,shared-route,next-trip,shared-trip,5,\n",
 		"shapes.txt":
 			shapesHeader + "shared-shape,-27.0,153.0,1,0\n",
 	});
@@ -239,9 +244,26 @@ async function testQualifiedIdentityAndRealtimeProvenance() {
 	);
 
 	assert.equal(gtfs.getTrips({ trip_id: "shared-trip" }).length, 2);
-	assert.equal(gtfs.getTrips({ route_id: "shared-route" }).length, 2);
-	assert.equal(gtfs.getTrips({ service_id: "shared-service", feed_id: "feed-a" }).length, 1);
-	assert.equal(gtfs.getTrips({ block_id: "shared-block", feed_id: "feed-b" }).length, 1);
+	assert.equal(gtfs.getTrips({ route_id: "shared-route" }).length, 4);
+	assert.equal(gtfs.getTrips({ service_id: "shared-service", feed_id: "feed-a" }).length, 2);
+	assert.equal(gtfs.getTrips({ block_id: "shared-block", feed_id: "feed-b" }).length, 2);
+	assert.deepEqual(
+		gtfs.getTransfers({ from_trip_id: "shared-trip", feed_id: "feed-b" }),
+		[
+			{
+				from_stop_id: "shared-stop",
+				to_stop_id: "shared-stop",
+				from_route_id: "shared-route",
+				to_route_id: "shared-route",
+				from_trip_id: "shared-trip",
+				to_trip_id: "next-trip",
+				transfer_type: 4,
+				min_transfer_time: null,
+				feed_id: "feed-b",
+			},
+		],
+	);
+	assert.equal(gtfs.getTransfers({ transfer_type: 5 }).length, 2);
 	assert.equal(gtfs.getStops({ stop_id: "shared-stop" }).length, 2);
 	assert.equal(gtfs.getRoutes({ route_id: "shared-route" }).length, 2);
 	assert.equal(gtfs.getStopTimes({ trip_id: "shared-trip" }).length, 2);

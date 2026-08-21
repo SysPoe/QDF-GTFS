@@ -116,6 +116,7 @@ private:
     Napi::Value GetStopTimes(const Napi::CallbackInfo& info);
     Napi::Value GetFeedInfo(const Napi::CallbackInfo& info);
     Napi::Value GetTrips(const Napi::CallbackInfo& info);
+    Napi::Value GetTransfers(const Napi::CallbackInfo& info);
     Napi::Value GetShapes(const Napi::CallbackInfo& info);
     Napi::Value GetCalendars(const Napi::CallbackInfo& info);
     Napi::Value GetCalendarDates(const Napi::CallbackInfo& info);
@@ -238,6 +239,7 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("getStopTimes", &GTFSAddon::GetStopTimes),
         InstanceMethod("getFeedInfo", &GTFSAddon::GetFeedInfo),
         InstanceMethod("getTrips", &GTFSAddon::GetTrips),
+        InstanceMethod("getTransfers", &GTFSAddon::GetTransfers),
         InstanceMethod("getShapes", &GTFSAddon::GetShapes),
         InstanceMethod("getCalendars", &GTFSAddon::GetCalendars),
         InstanceMethod("getCalendarDates", &GTFSAddon::GetCalendarDates),
@@ -1261,6 +1263,55 @@ Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
         if (t.wheelchair_accessible.has_value()) obj.Set("wheelchair_accessible", t.wheelchair_accessible.value()); else obj.Set("wheelchair_accessible", env.Null());
         if (t.bikes_allowed.has_value()) obj.Set("bikes_allowed", t.bikes_allowed.value()); else obj.Set("bikes_allowed", env.Null());
         obj.Set("feed_id", t.feed_id);
+        arr[i] = obj;
+    }
+    return arr;
+}
+
+Napi::Value GTFSAddon::GetTransfers(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    Napi::Object filter;
+    bool has_filter = false;
+    if (info.Length() > 0 && info[0].IsObject()) {
+        filter = info[0].As<Napi::Object>();
+        has_filter = true;
+    }
+
+    auto optional_matches = [&](const std::optional<std::string>& value, const char* field) {
+        if (!has_filter || !filter.Has(field) || !filter.Get(field).IsString()) return true;
+        return value.has_value() && value.value() == filter.Get(field).As<Napi::String>().Utf8Value();
+    };
+    const bool has_type = has_filter && filter.Has("transfer_type") && filter.Get("transfer_type").IsNumber();
+    const int transfer_type = has_type ? filter.Get("transfer_type").As<Napi::Number>().Int32Value() : 0;
+    const bool has_feed = has_filter && filter.Has("feed_id") && filter.Get("feed_id").IsString();
+    const std::string feed_id = has_feed ? filter.Get("feed_id").As<Napi::String>().Utf8Value() : "";
+
+    std::vector<const gtfs::Transfer*> matches;
+    for (const auto& transfer : data.transfers) {
+        if (has_feed && transfer.feed_id != feed_id) continue;
+        if (has_type && transfer.transfer_type != transfer_type) continue;
+        if (!optional_matches(transfer.from_stop_id, "from_stop_id")) continue;
+        if (!optional_matches(transfer.to_stop_id, "to_stop_id")) continue;
+        if (!optional_matches(transfer.from_route_id, "from_route_id")) continue;
+        if (!optional_matches(transfer.to_route_id, "to_route_id")) continue;
+        if (!optional_matches(transfer.from_trip_id, "from_trip_id")) continue;
+        if (!optional_matches(transfer.to_trip_id, "to_trip_id")) continue;
+        matches.push_back(&transfer);
+    }
+
+    Napi::Array arr = Napi::Array::New(env, matches.size());
+    for (size_t i = 0; i < matches.size(); ++i) {
+        const auto& transfer = *matches[i];
+        Napi::Object obj = Napi::Object::New(env);
+        if (transfer.from_stop_id.has_value()) obj.Set("from_stop_id", transfer.from_stop_id.value()); else obj.Set("from_stop_id", env.Null());
+        if (transfer.to_stop_id.has_value()) obj.Set("to_stop_id", transfer.to_stop_id.value()); else obj.Set("to_stop_id", env.Null());
+        if (transfer.from_route_id.has_value()) obj.Set("from_route_id", transfer.from_route_id.value()); else obj.Set("from_route_id", env.Null());
+        if (transfer.to_route_id.has_value()) obj.Set("to_route_id", transfer.to_route_id.value()); else obj.Set("to_route_id", env.Null());
+        if (transfer.from_trip_id.has_value()) obj.Set("from_trip_id", transfer.from_trip_id.value()); else obj.Set("from_trip_id", env.Null());
+        if (transfer.to_trip_id.has_value()) obj.Set("to_trip_id", transfer.to_trip_id.value()); else obj.Set("to_trip_id", env.Null());
+        obj.Set("transfer_type", transfer.transfer_type);
+        if (transfer.min_transfer_time.has_value()) obj.Set("min_transfer_time", transfer.min_transfer_time.value()); else obj.Set("min_transfer_time", env.Null());
+        obj.Set("feed_id", transfer.feed_id);
         arr[i] = obj;
     }
     return arr;
