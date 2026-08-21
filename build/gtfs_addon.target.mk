@@ -176,4 +176,3 @@ gtfs_addon.node: $(obj).target/gtfs_addon.node $(builddir)/gtfs_addon.node
 # Add executable to "all" target.
 .PHONY: all
 all: $(builddir)/gtfs_addon.node
-
