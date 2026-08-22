@@ -408,6 +408,8 @@ export interface TransferQuery {
 export interface StopTimeQuery {
     stop_id?: string;
     trip_id?: string;
+    /** Batch lookup for several trips using the native trip index. */
+    trip_ids?: readonly string[];
     date?: string;
     start_time?: number | string;
     end_time?: number | string;

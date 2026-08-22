@@ -1103,7 +1103,6 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
         }
         mz_zip_reader_end(&zip_archive);
 
-        std::vector<std::future<size_t>> futures;
         std::atomic<int64_t> processed_bytes(0);
 
         // Lambda that wraps a parser taking (GTFSData&, const char*, size_t, int, const string&, progress_fn)
@@ -1149,6 +1148,7 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
             return count;
         };
 
+        std::vector<std::future<size_t>> futures;
         if (file_contents.count("agency.txt"))
             futures.push_back(std::async(std::launch::async, process_file, parse_agency, "agency.txt"));
         if (file_contents.count("routes.txt"))
@@ -1192,30 +1192,41 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
 
                 processed_bytes.fetch_add(static_cast<int64_t>(start_pos));
 
-                // Cap thread count at min(hardware_concurrency, 8) to prevent oversubscription
+                size_t data_size = content_size - start_pos;
+
+                // Cap thread count at eight and avoid spawning one task per
+                // tiny fixture/file. Large stop_times files still use the
+                // available workers, with roughly 256 KiB per chunk.
                 unsigned int thread_count = std::thread::hardware_concurrency();
                 if (thread_count == 0) thread_count = 4;
                 if (thread_count > 8) thread_count = 8;
+                constexpr size_t TARGET_CHUNK_BYTES = 256 * 1024;
+                const size_t size_based_threads = std::max<size_t>(
+                    1, (data_size + TARGET_CHUNK_BYTES - 1) / TARGET_CHUNK_BYTES);
+                thread_count = static_cast<unsigned int>(std::min<size_t>(thread_count, size_based_threads));
 
-                size_t data_size = content_size - start_pos;
-                size_t chunk_size = data_size / thread_count;
+                size_t chunk_size = (data_size + thread_count - 1) / thread_count;
 
                 std::vector<std::future<std::vector<StopTime>>> chunk_futures;
                 size_t current_pos = start_pos;
 
                 for (unsigned int i = 0; i < thread_count; ++i) {
-                    size_t end_pos = current_pos + chunk_size;
-                    if (i == thread_count - 1) {
-                        end_pos = content_size;
-                    } else {
-                        // Advance to next newline boundary
+                    if (current_pos >= content_size) break;
+
+                    size_t end_pos = (i == thread_count - 1)
+                        ? content_size
+                        : std::min(content_size, current_pos + chunk_size);
+                    if (end_pos < content_size) {
+                        // Advance to the next newline boundary.
                         const char* search_start = content_data + end_pos;
                         size_t remaining = content_size - end_pos;
                         const char* next_nl = static_cast<const char*>(memchr(search_start, '\n', remaining));
                         end_pos = next_nl ? static_cast<size_t>(next_nl - content_data) + 1 : content_size;
                     }
 
-                    if (current_pos >= content_size) break;
+                    if (end_pos <= current_pos) {
+                        end_pos = content_size;
+                    }
 
                     size_t len = end_pos - current_pos;
                     const char* ptr = content_data + current_pos;
