@@ -176,7 +176,8 @@ function makeCollisionFeed(name: string): Buffer {
 			`shared-stop,${name} Stop,-27.0,153.0\n`,
 		"stop_times.txt":
 			"trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"shared-trip,25:30:00,25:31:00,shared-stop,1\n",
+			"shared-trip,25:30:00,25:31:00,shared-stop,1\n" +
+			"next-trip,26:00:00,26:01:00,shared-stop,1\n",
 		"calendar.txt":
 			"service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
 			"shared-service,1,1,1,1,1,1,1,20260801,20260831\n",
@@ -332,6 +333,28 @@ async function testTripStopTimeIndexAcrossFeeds() {
 	);
 }
 
+async function testTripStopTimeBatchIndex() {
+	const gtfs = new GTFS();
+	await gtfs.loadFromBuffers(
+		[makeCollisionFeed("Alpha"), makeCollisionFeed("Beta")],
+		["feed-a", "feed-b"],
+	);
+
+	assert.deepEqual(
+		gtfs
+			.getStopTimes({ trip_ids: ["shared-trip", "next-trip"], feed_id: "feed-b" })
+			.map(({ feed_id, trip_id, stop_id }) => ({ feed_id, trip_id, stop_id })),
+		[
+			{ feed_id: "feed-b", trip_id: "shared-trip", stop_id: "shared-stop" },
+			{ feed_id: "feed-b", trip_id: "next-trip", stop_id: "shared-stop" },
+		],
+	);
+	assert.deepEqual(
+		gtfs.getStopTimes({ trip_ids: ["shared-trip"], feed_id: "feed-a" }).map(({ feed_id, stop_id }) => ({ feed_id, stop_id })),
+		[{ feed_id: "feed-a", stop_id: "shared-stop" }],
+	);
+}
+
 function testFeedIdentityValidation() {
 	const gtfs = new GTFS();
 	assert.throws(() => gtfs.loadFromBuffers([], []), /At least one GTFS buffer/);
@@ -418,6 +441,7 @@ async function testIndexedLookupScaling() {
 await testShapeFiltersAndMergeStrategies();
 await testQualifiedIdentityAndRealtimeProvenance();
 await testTripStopTimeIndexAcrossFeeds();
+await testTripStopTimeBatchIndex();
 testFeedIdentityValidation();
 testNestedArchiveExtraction();
 testMultiCarriageDetails();

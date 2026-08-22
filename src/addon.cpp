@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 #include <functional>
+#include <unordered_set>
 #include <iomanip>
 #include <cmath>
 
@@ -937,6 +938,22 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
         has_trip_id = true;
     }
 
+    bool has_trip_ids = false;
+    std::vector<uint32_t> filter_trip_ids;
+    std::unordered_set<uint32_t> filter_trip_id_set;
+    if (config.Has("trip_ids") && config.Get("trip_ids").IsArray()) {
+        has_trip_ids = true;
+        Napi::Array trip_ids = config.Get("trip_ids").As<Napi::Array>();
+        filter_trip_ids.reserve(trip_ids.Length());
+        for (uint32_t i = 0; i < trip_ids.Length(); ++i) {
+            Napi::Value value = trip_ids.Get(i);
+            if (!value.IsString()) continue;
+            uint32_t trip_id = data.string_pool.get_id(value.As<Napi::String>().Utf8Value());
+            if (trip_id == 0xFFFFFFFF || !filter_trip_id_set.insert(trip_id).second) continue;
+            filter_trip_ids.push_back(trip_id);
+        }
+    }
+
     bool has_stop_id = false;
     uint32_t filter_stop_id = 0xFFFFFFFF;
     if (config.Has("stop_id") && config.Get("stop_id").IsString()) {
@@ -1008,6 +1025,7 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
 
     auto check_inclusion = [&](const gtfs::StopTime& st) {
         if (has_trip_id && st.trip_id != filter_trip_id) return;
+        if (has_trip_ids && !filter_trip_id_set.contains(st.trip_id)) return;
         if (has_stop_id && st.stop_id != filter_stop_id) return;
         if (has_feed_id && st.feed_id != filter_feed_id_int) return;
 
@@ -1055,6 +1073,15 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
     if (has_trip_id) {
         auto trip_it = data.stop_times_by_trip_id.find(filter_trip_id);
         if (trip_it != data.stop_times_by_trip_id.end()) {
+            for (size_t idx : trip_it->second) {
+                check_inclusion(data.stop_times[idx]);
+            }
+        }
+
+    } else if (has_trip_ids) {
+        for (uint32_t trip_id : filter_trip_ids) {
+            auto trip_it = data.stop_times_by_trip_id.find(trip_id);
+            if (trip_it == data.stop_times_by_trip_id.end()) continue;
             for (size_t idx : trip_it->second) {
                 check_inclusion(data.stop_times[idx]);
             }
