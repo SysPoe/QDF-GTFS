@@ -863,6 +863,77 @@ size_t parse_calendar(GTFSData& data, const char* content_data, size_t content_s
     return count;
 }
 
+size_t parse_occupancies(GTFSData& data, const char* content_data, size_t content_size, int merge_strategy, const std::string& feed_id, const std::function<void(size_t)>& on_progress = nullptr) {
+    (void)merge_strategy;
+    const char* ptr = content_data;
+    const char* end = content_data + content_size;
+    const char* line_start; size_t line_len;
+
+    ptr = advance_line(ptr, end, line_start, line_len);
+    if (line_len == 0) return 0;
+    std::string header_str(line_start, line_len);
+    remove_bom(header_str);
+    auto headers = parse_csv_line(header_str);
+
+    const int trip_idx = get_col_index(headers, "trip_id");
+    const int sequence_idx = get_col_index(headers, "stop_sequence");
+    const int status_idx = get_col_index(headers, "occupancy_status");
+    const int monday_idx = get_col_index(headers, "monday");
+    const int tuesday_idx = get_col_index(headers, "tuesday");
+    const int wednesday_idx = get_col_index(headers, "wednesday");
+    const int thursday_idx = get_col_index(headers, "thursday");
+    const int friday_idx = get_col_index(headers, "friday");
+    const int saturday_idx = get_col_index(headers, "saturday");
+    const int sunday_idx = get_col_index(headers, "sunday");
+    const int start_idx = get_col_index(headers, "start_date");
+    const int end_idx = get_col_index(headers, "end_date");
+    const int exception_idx = get_col_index(headers, "exception");
+    if (trip_idx < 0 || sequence_idx < 0 || status_idx < 0 || start_idx < 0) return 0;
+
+    const uint32_t feed_id_int = data.string_pool.intern(feed_id);
+    size_t count = 0;
+    size_t bytes_read = line_len + 1;
+    size_t last_report = 0;
+    auto report_progress = [&](size_t bytes) {
+        if (on_progress && bytes - last_report >= PROGRESS_CHUNK_BYTES) {
+            on_progress(bytes);
+            last_report = bytes;
+        }
+    };
+
+    while (ptr < end) {
+        ptr = advance_line(ptr, end, line_start, line_len);
+        bytes_read += line_len + 1;
+        if (line_len == 0) { report_progress(bytes_read); continue; }
+        auto row = parse_csv_line(std::string(line_start, line_len));
+        const std::string trip_id = get_val(row, trip_idx);
+        const int status = get_int(row, status_idx, -1);
+        if (trip_id.empty() || status < 0 || status > 6) { report_progress(bytes_read); continue; }
+
+        StaticOccupancy occupancy;
+        occupancy.trip_id = data.string_pool.intern(trip_id);
+        occupancy.feed_id = feed_id_int;
+        occupancy.stop_sequence = get_int(row, sequence_idx);
+        occupancy.occupancy_status = static_cast<int8_t>(status);
+        occupancy.start_date = static_cast<uint32_t>(get_int(row, start_idx));
+        occupancy.end_date = static_cast<uint32_t>(get_int(row, end_idx));
+        occupancy.exception = static_cast<int8_t>(get_int(row, exception_idx));
+        occupancy.weekday_mask =
+            (get_bool(row, monday_idx) ? 1u << 0 : 0) |
+            (get_bool(row, tuesday_idx) ? 1u << 1 : 0) |
+            (get_bool(row, wednesday_idx) ? 1u << 2 : 0) |
+            (get_bool(row, thursday_idx) ? 1u << 3 : 0) |
+            (get_bool(row, friday_idx) ? 1u << 4 : 0) |
+            (get_bool(row, saturday_idx) ? 1u << 5 : 0) |
+            (get_bool(row, sunday_idx) ? 1u << 6 : 0);
+        data.static_occupancies.push_back(occupancy);
+        count++;
+        report_progress(bytes_read);
+    }
+    if (on_progress && bytes_read > last_report) on_progress(bytes_read);
+    return count;
+}
+
 size_t parse_calendar_dates(GTFSData& data, const char* content_data, size_t content_size, int merge_strategy, const std::string& feed_id, const std::function<void(size_t)>& on_progress = nullptr) {
     const char* ptr = content_data;
     const char* end = content_data + content_size;
@@ -1056,7 +1127,8 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
     // Build effective file filter (empty = load all)
     const std::vector<std::string> all_target_files = {
         "agency.txt", "routes.txt", "trips.txt", "stops.txt", "stop_times.txt",
-        "calendar.txt", "calendar_dates.txt", "transfers.txt", "shapes.txt", "feed_info.txt"
+        "calendar.txt", "calendar_dates.txt", "transfers.txt", "shapes.txt", "feed_info.txt",
+        "occupancies.txt"
     };
     const std::vector<std::string>& target_files = files_to_load.empty() ? all_target_files : files_to_load;
 
@@ -1161,6 +1233,8 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
             futures.push_back(std::async(std::launch::async, process_file, parse_calendar, "calendar.txt"));
         if (file_contents.count("calendar_dates.txt"))
             futures.push_back(std::async(std::launch::async, process_file, parse_calendar_dates, "calendar_dates.txt"));
+        if (file_contents.count("occupancies.txt"))
+            futures.push_back(std::async(std::launch::async, process_file, parse_occupancies, "occupancies.txt"));
         if (file_contents.count("transfers.txt"))
             futures.push_back(std::async(std::launch::async, process_file, parse_transfers, "transfers.txt"));
         if (file_contents.count("shapes.txt"))
@@ -1333,6 +1407,11 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
     for (size_t i = 0; i < data.stop_times.size(); ++i) {
         data.stop_times_by_stop_id[data.stop_times[i].stop_id].push_back(i);
         data.stop_times_by_trip_id[data.stop_times[i].trip_id].push_back(i);
+    }
+
+    if (log && !data.static_occupancies.empty()) log("Indexing static occupancies by trip_id...");
+    for (size_t i = 0; i < data.static_occupancies.size(); ++i) {
+        data.static_occupancies_by_trip_id[data.static_occupancies[i].trip_id].push_back(i);
     }
 
     // Build trip indexes after parsing, when the feed maps will no longer mutate.

@@ -259,6 +259,21 @@ export interface StopTime {
     feed_id: string;
 }
 
+/** Expected whole-service occupancy from a provider static-feed extension. */
+export interface StaticOccupancy {
+    trip_id: string;
+    stop_sequence: number;
+    occupancy_status: OccupancyStatus;
+    date: string;
+    feed_id: string;
+}
+
+export interface StaticOccupancyQuery {
+    trip_id: string;
+    feed_id: string;
+    date: string; // YYYYMMDD
+}
+
 export interface FeedInfo {
     feed_publisher_name: string;
     feed_publisher_url: string;

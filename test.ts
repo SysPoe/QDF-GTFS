@@ -184,6 +184,10 @@ function makeCollisionFeed(name: string): Buffer {
 		"calendar_dates.txt":
 			"service_id,date,exception_type\n" +
 			"shared-service,20260805,2\n",
+		"occupancies.txt":
+			"trip_id,stop_sequence,occupancy_status,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date,exception\n" +
+			"shared-trip,1,1,1,0,0,0,0,0,0,20260801,20260831,0\n" +
+			"shared-trip,1,4,0,0,0,0,0,1,0,20260801,20260831,0\n",
 		"transfers.txt":
 			"from_stop_id,to_stop_id,from_route_id,to_route_id,from_trip_id,to_trip_id,transfer_type,min_transfer_time\n" +
 			"shared-stop,shared-stop,shared-route,shared-route,shared-trip,next-trip,4,\n" +
@@ -273,6 +277,13 @@ async function testQualifiedIdentityAndRealtimeProvenance() {
 	assert.equal(gtfs.getStopTimes({ trip_id: "shared-trip", feed_id: "feed-a" })[0].arrival_time, 91800);
 	assert.equal(gtfs.getServiceDatesByTrip({ feedId: "feed-a", localId: "shared-trip" }).includes("20260805"), false);
 	assert.equal(gtfs.getServiceDatesByTrip({ feedId: "feed-b", localId: "shared-trip" }).includes("20260806"), true);
+	assert.deepEqual(gtfs.getStaticOccupancies({ feed_id: "feed-a", trip_id: "shared-trip", date: "20260803" }), [
+		{ trip_id: "shared-trip", stop_sequence: 1, occupancy_status: 1, date: "20260803", feed_id: "feed-a" },
+	]);
+	assert.deepEqual(gtfs.getStaticOccupancies({ feed_id: "feed-b", trip_id: "shared-trip", date: "20260808" }), [
+		{ trip_id: "shared-trip", stop_sequence: 1, occupancy_status: 4, date: "20260808", feed_id: "feed-b" },
+	]);
+	assert.deepEqual(gtfs.getStaticOccupancies({ feed_id: "feed-a", trip_id: "shared-trip", date: "20260804" }), []);
 
 	gtfs.updateRealtime({
 		kind: "trip-updates",

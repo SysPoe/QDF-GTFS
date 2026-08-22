@@ -199,6 +199,22 @@ struct StopTime {
     uint8_t  _pad[3]          = {};
 };
 
+// TfNSW static extension from occupancies.txt. Dates are YYYYMMDD integers;
+// end_date 0 means the rule has no explicit upper bound.
+struct StaticOccupancy {
+    uint32_t trip_id = 0;
+    uint32_t feed_id = 0;
+    uint32_t start_date = 0;
+    uint32_t end_date = 0;
+    int32_t stop_sequence = 0;
+    int8_t occupancy_status = -1;
+    uint8_t weekday_mask = 0;
+    int8_t exception = 0;
+    uint8_t _pad = 0;
+};
+
+static_assert(sizeof(StaticOccupancy) <= 24, "Static occupancy storage must remain compact");
+
 struct Trip {
     std::string route_id;
     std::string service_id;
@@ -357,6 +373,9 @@ public:
     // matching row here and apply feed filters while reading the index.
     std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_trip_id; // index into stop_times
 
+    std::vector<StaticOccupancy> static_occupancies;
+    std::unordered_map<uint32_t, std::vector<size_t>> static_occupancies_by_trip_id;
+
     std::unordered_map<std::string, std::unordered_map<std::string, Trip>> trips;
     std::vector<Transfer> transfers;
     // Secondary indexes keep common trip searches out of the full feed map.
@@ -383,6 +402,8 @@ public:
         stop_times.clear();
         stop_times_by_stop_id.clear();
         stop_times_by_trip_id.clear();
+        static_occupancies.clear();
+        static_occupancies_by_trip_id.clear();
         trips.clear();
         transfers.clear();
         trips_by_route_id.clear();

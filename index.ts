@@ -10,7 +10,7 @@ import {
     Agency, Route, Stop, StopTime, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
     GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSActions, QualifiedEntityId,
-    RealtimeFilter, TransferQuery
+    RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery
 } from './types.js';
 
 export * from './types.js';
@@ -38,6 +38,7 @@ try {
                     getAgencies() { return []; }
                     getStops() { return []; }
                     getStopTimes() { return []; }
+                    getStaticOccupancies() { return []; }
                     getTrips() { return []; }
                     getTransfers() { return []; }
                     getShapes() { return []; }
@@ -400,7 +401,7 @@ export class GTFS {
             this.showProgress(task, current, total, speed, eta);
         };
 
-        const ALL_FILES = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','transfers.txt','shapes.txt','feed_info.txt'];
+        const ALL_FILES = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','transfers.txt','shapes.txt','feed_info.txt','occupancies.txt'];
         let effectiveFiles: string[] = this.filesToLoad ? [...this.filesToLoad] : [];
         if (this.skipStopTimes && effectiveFiles.length === 0) {
             effectiveFiles = ALL_FILES.filter(f => f !== 'stop_times.txt');
@@ -432,6 +433,10 @@ export class GTFS {
 
     getStopTimes(query?: StopTimeQuery): StopTime[] {
         return this.addonInstance.getStopTimes(query || {});
+    }
+
+    getStaticOccupancies(query: StaticOccupancyQuery): StaticOccupancy[] {
+        return this.addonInstance.getStaticOccupancies(query);
     }
 
     getFeedInfo(): FeedInfo[] {

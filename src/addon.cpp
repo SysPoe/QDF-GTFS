@@ -115,6 +115,7 @@ private:
     Napi::Value GetAgencies(const Napi::CallbackInfo& info);
     Napi::Value GetStops(const Napi::CallbackInfo& info);
     Napi::Value GetStopTimes(const Napi::CallbackInfo& info);
+    Napi::Value GetStaticOccupancies(const Napi::CallbackInfo& info);
     Napi::Value GetFeedInfo(const Napi::CallbackInfo& info);
     Napi::Value GetTrips(const Napi::CallbackInfo& info);
     Napi::Value GetTransfers(const Napi::CallbackInfo& info);
@@ -238,6 +239,7 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("getAgencies", &GTFSAddon::GetAgencies),
         InstanceMethod("getStops", &GTFSAddon::GetStops),
         InstanceMethod("getStopTimes", &GTFSAddon::GetStopTimes),
+        InstanceMethod("getStaticOccupancies", &GTFSAddon::GetStaticOccupancies),
         InstanceMethod("getFeedInfo", &GTFSAddon::GetFeedInfo),
         InstanceMethod("getTrips", &GTFSAddon::GetTrips),
         InstanceMethod("getTransfers", &GTFSAddon::GetTransfers),
@@ -1129,6 +1131,69 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
         arr[i] = obj;
     }
     return arr;
+}
+
+Napi::Value GTFSAddon::GetStaticOccupancies(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsObject()) {
+        Napi::TypeError::New(env, "Static occupancy query expected").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    Napi::Object query = info[0].As<Napi::Object>();
+    if (!query.Has("trip_id") || !query.Get("trip_id").IsString() ||
+        !query.Has("feed_id") || !query.Get("feed_id").IsString() ||
+        !query.Has("date") || !query.Get("date").IsString()) {
+        Napi::TypeError::New(env, "trip_id, feed_id, and date are required").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    const std::string trip_id = query.Get("trip_id").As<Napi::String>().Utf8Value();
+    const std::string feed_id = query.Get("feed_id").As<Napi::String>().Utf8Value();
+    const std::string date_string = query.Get("date").As<Napi::String>().Utf8Value();
+    const uint32_t trip_id_int = data.string_pool.get_id(trip_id);
+    const uint32_t feed_id_int = data.string_pool.get_id(feed_id);
+    if (trip_id_int == 0xFFFFFFFF || feed_id_int == 0xFFFFFFFF || date_string.length() != 8) {
+        return Napi::Array::New(env, 0);
+    }
+
+    uint32_t date = 0;
+    try { date = static_cast<uint32_t>(std::stoul(date_string)); }
+    catch (...) { return Napi::Array::New(env, 0); }
+    const int weekday = GetDayOfWeek(date_string);
+    if (weekday < 0) return Napi::Array::New(env, 0);
+    const uint8_t weekday_bit = static_cast<uint8_t>(1u << ((weekday + 6) % 7));
+
+    struct Match { const gtfs::StaticOccupancy* value; };
+    std::map<int32_t, Match> matches;
+    auto index_it = data.static_occupancies_by_trip_id.find(trip_id_int);
+    if (index_it != data.static_occupancies_by_trip_id.end()) {
+        for (const size_t index : index_it->second) {
+            const auto& occupancy = data.static_occupancies[index];
+            if (occupancy.feed_id != feed_id_int || occupancy.exception != 0) continue;
+            if (date < occupancy.start_date || (occupancy.end_date != 0 && date > occupancy.end_date)) continue;
+            if ((occupancy.weekday_mask & weekday_bit) == 0) continue;
+            auto existing = matches.find(occupancy.stop_sequence);
+            if (existing == matches.end() ||
+                occupancy.start_date > existing->second.value->start_date ||
+                (occupancy.start_date == existing->second.value->start_date &&
+                 occupancy.occupancy_status > existing->second.value->occupancy_status)) {
+                matches[occupancy.stop_sequence] = { &occupancy };
+            }
+        }
+    }
+
+    Napi::Array result = Napi::Array::New(env, matches.size());
+    uint32_t output_index = 0;
+    for (const auto& [stop_sequence, match] : matches) {
+        Napi::Object item = Napi::Object::New(env);
+        item.Set("trip_id", trip_id);
+        item.Set("stop_sequence", stop_sequence);
+        item.Set("occupancy_status", match.value->occupancy_status);
+        item.Set("date", date_string);
+        item.Set("feed_id", feed_id);
+        result[output_index++] = item;
+    }
+    return result;
 }
 
 Napi::Value GTFSAddon::GetFeedInfo(const Napi::CallbackInfo& info) {
