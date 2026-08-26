@@ -115,6 +115,7 @@ private:
     Napi::Value GetAgencies(const Napi::CallbackInfo& info);
     Napi::Value GetStops(const Napi::CallbackInfo& info);
     Napi::Value GetStopTimes(const Napi::CallbackInfo& info);
+    Napi::Value GetTripStopTimeBounds(const Napi::CallbackInfo& info);
     Napi::Value GetStaticOccupancies(const Napi::CallbackInfo& info);
     Napi::Value GetFeedInfo(const Napi::CallbackInfo& info);
     Napi::Value GetTrips(const Napi::CallbackInfo& info);
@@ -239,6 +240,7 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("getAgencies", &GTFSAddon::GetAgencies),
         InstanceMethod("getStops", &GTFSAddon::GetStops),
         InstanceMethod("getStopTimes", &GTFSAddon::GetStopTimes),
+        InstanceMethod("getTripStopTimeBounds", &GTFSAddon::GetTripStopTimeBounds),
         InstanceMethod("getStaticOccupancies", &GTFSAddon::GetStaticOccupancies),
         InstanceMethod("getFeedInfo", &GTFSAddon::GetFeedInfo),
         InstanceMethod("getTrips", &GTFSAddon::GetTrips),
@@ -1131,6 +1133,59 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
         arr[i] = obj;
     }
     return arr;
+}
+
+Napi::Value GTFSAddon::GetTripStopTimeBounds(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    Napi::Array result = Napi::Array::New(env);
+    uint32_t result_index = 0;
+
+    size_t group_start = 0;
+    while (group_start < data.stop_times.size()) {
+        const auto& first_row = data.stop_times[group_start];
+        size_t group_end = group_start + 1;
+        while (
+            group_end < data.stop_times.size() &&
+            data.stop_times[group_end].feed_id == first_row.feed_id &&
+            data.stop_times[group_end].trip_id == first_row.trip_id
+        ) {
+            ++group_end;
+        }
+
+        int32_t start_time = INT32_MAX;
+        int32_t end_time = INT32_MIN;
+        uint32_t first_stop_id = first_row.stop_id;
+        uint32_t last_stop_id = first_row.stop_id;
+        for (size_t i = group_start; i < group_end; ++i) {
+            const auto& stop_time = data.stop_times[i];
+            const int32_t times[2] = { stop_time.arrival_time, stop_time.departure_time };
+            for (int32_t time : times) {
+                if (time == gtfs::ST_NO_TIME) continue;
+                if (time < start_time) {
+                    start_time = time;
+                    first_stop_id = stop_time.stop_id;
+                }
+                if (time > end_time) {
+                    end_time = time;
+                    last_stop_id = stop_time.stop_id;
+                }
+            }
+        }
+
+        if (start_time != INT32_MAX && end_time != INT32_MIN) {
+            Napi::Object bounds = Napi::Object::New(env);
+            bounds.Set("trip_id", data.string_pool.get_ref(first_row.trip_id));
+            bounds.Set("feed_id", data.string_pool.get_ref(first_row.feed_id));
+            bounds.Set("start_time", start_time);
+            bounds.Set("end_time", end_time);
+            bounds.Set("first_stop_id", data.string_pool.get_ref(first_stop_id));
+            bounds.Set("last_stop_id", data.string_pool.get_ref(last_stop_id));
+            result.Set(result_index++, bounds);
+        }
+        group_start = group_end;
+    }
+
+    return result;
 }
 
 Napi::Value GTFSAddon::GetStaticOccupancies(const Napi::CallbackInfo& info) {

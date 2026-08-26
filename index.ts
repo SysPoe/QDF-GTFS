@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import * as crypto from 'crypto';
 import { inflateRawSync } from 'zlib';
 import {
-    Agency, Route, Stop, StopTime, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate,
+    Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
     GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSActions, QualifiedEntityId,
     RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery
@@ -38,6 +38,7 @@ try {
                     getAgencies() { return []; }
                     getStops() { return []; }
                     getStopTimes() { return []; }
+                    getTripStopTimeBounds() { return []; }
                     getStaticOccupancies() { return []; }
                     getTrips() { return []; }
                     getTransfers() { return []; }
@@ -433,6 +434,10 @@ export class GTFS {
 
     getStopTimes(query?: StopTimeQuery): StopTime[] {
         return this.addonInstance.getStopTimes(query || {});
+    }
+
+    getTripStopTimeBounds(): TripStopTimeBounds[] {
+        return this.addonInstance.getTripStopTimeBounds();
     }
 
     getStaticOccupancies(query: StaticOccupancyQuery): StaticOccupancy[] {

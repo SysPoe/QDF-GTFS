@@ -31,6 +31,7 @@ try {
                     getAgencies() { return []; }
                     getStops() { return []; }
                     getStopTimes() { return []; }
+                    getTripStopTimeBounds() { return []; }
                     getStaticOccupancies() { return []; }
                     getTrips() { return []; }
                     getTransfers() { return []; }
@@ -431,6 +432,9 @@ export class GTFS {
     }
     getStopTimes(query) {
         return this.addonInstance.getStopTimes(query || {});
+    }
+    getTripStopTimeBounds() {
+        return this.addonInstance.getTripStopTimeBounds();
     }
     getStaticOccupancies(query) {
         return this.addonInstance.getStaticOccupancies(query);

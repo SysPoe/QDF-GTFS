@@ -227,6 +227,15 @@ export interface StopTime {
     continuous_drop_off: ContinuousDropOff | null;
     feed_id: string;
 }
+/** Compact feed-qualified scheduled extent for one trip. */
+export interface TripStopTimeBounds {
+    trip_id: string;
+    feed_id: string;
+    start_time: number;
+    end_time: number;
+    first_stop_id: string;
+    last_stop_id: string;
+}
 /** Expected whole-service occupancy from a provider static-feed extension. */
 export interface StaticOccupancy {
     trip_id: string;

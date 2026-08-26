@@ -366,6 +366,53 @@ async function testTripStopTimeBatchIndex() {
 	);
 }
 
+async function testTripStopTimeBoundsAcrossFeeds() {
+	const header = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n";
+	const first = createZip({
+		"stop_times.txt":
+			header +
+			"long-trip,06:00:00,06:05:00,origin-a,1\n" +
+			"long-trip,102:30:00,102:35:00,destination-a,2\n" +
+			"overnight-trip,23:55:00,24:00:00,origin-overnight,1\n" +
+			"overnight-trip,25:15:00,25:20:00,destination-overnight,2\n",
+	});
+	const second = createZip({
+		"stop_times.txt":
+			header +
+			"long-trip,12:00:00,12:05:00,origin-b,1\n" +
+			"long-trip,14:00:00,14:05:00,destination-b,2\n",
+	});
+	const gtfs = new GTFS({ filesToLoad: ["stop_times.txt"] });
+	await gtfs.loadFromBuffers([first, second], ["feed-a", "feed-b"]);
+
+	assert.deepEqual(gtfs.getTripStopTimeBounds(), [
+		{
+			trip_id: "long-trip",
+			feed_id: "feed-a",
+			start_time: 6 * 3600,
+			end_time: 102 * 3600 + 35 * 60,
+			first_stop_id: "origin-a",
+			last_stop_id: "destination-a",
+		},
+		{
+			trip_id: "overnight-trip",
+			feed_id: "feed-a",
+			start_time: 23 * 3600 + 55 * 60,
+			end_time: 25 * 3600 + 20 * 60,
+			first_stop_id: "origin-overnight",
+			last_stop_id: "destination-overnight",
+		},
+		{
+			trip_id: "long-trip",
+			feed_id: "feed-b",
+			start_time: 12 * 3600,
+			end_time: 14 * 3600 + 5 * 60,
+			first_stop_id: "origin-b",
+			last_stop_id: "destination-b",
+		},
+	]);
+}
+
 function testFeedIdentityValidation() {
 	const gtfs = new GTFS();
 	assert.throws(() => gtfs.loadFromBuffers([], []), /At least one GTFS buffer/);
@@ -453,6 +500,7 @@ await testShapeFiltersAndMergeStrategies();
 await testQualifiedIdentityAndRealtimeProvenance();
 await testTripStopTimeIndexAcrossFeeds();
 await testTripStopTimeBatchIndex();
+await testTripStopTimeBoundsAcrossFeeds();
 testFeedIdentityValidation();
 testNestedArchiveExtraction();
 testMultiCarriageDetails();
