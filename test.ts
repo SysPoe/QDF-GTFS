@@ -430,16 +430,25 @@ async function testQualifiedIdentityAndRealtimeProvenance() {
 			{ update_id: "b-1", feed_id: "feed-b", source_id: "source-b" },
 		],
 	);
+	assert.deepEqual(
+		gtfs.getRealtimeTripUpdates({ trip_id: "shared-trip", feed_id: "feed-a" }).map((update) => update.update_id),
+		["a-1"],
+	);
 
-	gtfs.updateRealtime({
+	const replacementRefresh = gtfs.updateRealtime({
 		kind: "trip-updates",
 		data: makeTripUpdateFeed("a-2", "shared-trip"),
 		targetFeedId: "feed-a",
 		sourceId: "source-a",
 	});
+	assert.deepEqual(replacementRefresh.changed_trip_ids, [{ trip_id: "shared-trip", feed_id: "feed-a" }]);
 	assert.deepEqual(
 		gtfs.getRealtimeTripUpdates().map((update) => update.update_id).sort(),
 		["a-2", "b-1"],
+	);
+	assert.deepEqual(
+		gtfs.getRealtimeTripUpdates({ trip_id: "shared-trip", feed_id: "feed-a" }).map((update) => update.update_id),
+		["a-2"],
 	);
 }
 
