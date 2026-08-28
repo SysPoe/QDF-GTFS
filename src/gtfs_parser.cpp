@@ -1248,6 +1248,7 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
                 [&data, &file_contents, progress, log, total_uncompressed_size, &processed_bytes, &merged_stop_times, merge_strategy, current_feed_id, current_feed_id_int]() -> size_t {
                 const std::vector<char>& content_vec = file_contents.at("stop_times.txt");
                 if (content_vec.empty()) return 0;
+                const auto stop_times_started = std::chrono::steady_clock::now();
 
                 const char* content_data = content_vec.data();
                 size_t content_size = content_vec.size();
@@ -1349,7 +1350,13 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
                     merged_stop_times[qualified_id] = std::move(vec);
                 }
 
-                if (log) log("Loaded " + std::to_string(total_count) + " entries from stop_times.txt");
+                if (log) {
+                    const double stop_times_ms = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - stop_times_started
+                    ).count();
+                    log("Parsed stop_times.txt in " + std::to_string(stop_times_ms) + "ms (" +
+                        std::to_string(total_count) + " records)");
+                }
                 return total_count;
             });
         }
@@ -1363,6 +1370,7 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
 
     } // end feed loop
 
+    const auto finalization_started = std::chrono::steady_clock::now();
     if (log) log("All feeds loaded. Finalizing data...");
 
     size_t total_shapes = 0;
@@ -1386,27 +1394,34 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
     }
 
     size_t total_st = 0;
-    for (const auto& [tid, vec] : merged_stop_times) {
+    std::vector<uint64_t> sorted_stop_time_keys;
+    sorted_stop_time_keys.reserve(merged_stop_times.size());
+    for (const auto& [key, vec] : merged_stop_times) {
         total_st += vec.size();
+        sorted_stop_time_keys.push_back(key);
     }
+    // The packed key puts feed_id before trip_id, matching the former row sort.
+    std::sort(sorted_stop_time_keys.begin(), sorted_stop_time_keys.end());
+
     data.stop_times.reserve(total_st);
+    data.stop_times_by_trip_id.reserve(sorted_stop_time_keys.size());
 
-    for (auto& [tid, vec] : merged_stop_times) {
-        data.stop_times.insert(data.stop_times.end(), vec.begin(), vec.end());
-    }
+    if (log) log("Appending and indexing stop times...");
+    for (const uint64_t key : sorted_stop_time_keys) {
+        auto stop_times_it = merged_stop_times.find(key);
+        if (stop_times_it == merged_stop_times.end()) continue;
 
-    if (log) log("Sorting stop times...");
-    std::sort(data.stop_times.begin(), data.stop_times.end(),
-        [](const StopTime& a, const StopTime& b) {
-            if (a.feed_id != b.feed_id) return a.feed_id < b.feed_id;
-            if (a.trip_id != b.trip_id) return a.trip_id < b.trip_id;
-            return a.stop_sequence < b.stop_sequence;
-        });
-
-    if (log) log("Indexing stop times by stop_id and trip_id...");
-    for (size_t i = 0; i < data.stop_times.size(); ++i) {
-        data.stop_times_by_stop_id[data.stop_times[i].stop_id].push_back(i);
-        data.stop_times_by_trip_id[data.stop_times[i].trip_id].push_back(i);
+        auto& vec = stop_times_it->second;
+        const size_t begin = data.stop_times.size();
+        data.stop_times.insert(
+            data.stop_times.end(),
+            std::make_move_iterator(vec.begin()),
+            std::make_move_iterator(vec.end())
+        );
+        for (size_t i = begin; i < data.stop_times.size(); ++i) {
+            data.stop_times_by_stop_id[data.stop_times[i].stop_id].push_back(i);
+            data.stop_times_by_trip_id[data.stop_times[i].trip_id].push_back(i);
+        }
     }
 
     if (log && !data.static_occupancies.empty()) log("Indexing static occupancies by trip_id...");
@@ -1430,7 +1445,14 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
         }
     }
 
-    if (log) log("GTFS Data Loading Complete.");
+    if (log) {
+        const double finalization_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - finalization_started
+        ).count();
+        log("Finalized data in " + std::to_string(finalization_ms) + "ms (" +
+            std::to_string(data.stop_times.size()) + " stop-time rows)");
+        log("GTFS Data Loading Complete.");
+    }
 }
 
 
