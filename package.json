@@ -20,7 +20,8 @@
   "scripts": {
     "test": "tsx test.ts",
     "build": "tsc",
-    "prepare": "nub run build"
+    "prepare": "nub run build",
+    "benchmark:core": "nub run build && node --expose-gc benchmarks/core.mjs"
   },
   "keywords": [],
   "author": "",

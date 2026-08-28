@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
-import { extractZipEntry, GTFS, GTFSMergeStrategy, parseGtfsRtMultiCarriageDetails, type Shape } from "./index.js";
+import { extractZipEntry, GTFS, GTFSMergeStrategy, type Shape } from "./index.js";
 
 const crcTable = Array.from({ length: 256 }, (_, value) => {
 	let crc = value;
@@ -213,32 +213,147 @@ function protobufField(tag: number, body: Buffer | string): Buffer {
 	return Buffer.concat([protobufVarint((tag << 3) | 2), protobufVarint(bytes.length), bytes]);
 }
 
-function makeTripUpdateFeed(updateId: string, tripId: string): Buffer {
+function protobufVarintField(tag: number, value: number): Buffer {
+	return Buffer.concat([protobufVarint(tag << 3), protobufVarint(value)]);
+}
+
+function makeTripUpdateFeed(updateId: string, tripId: string, stopTimeUpdateCount = 0): Buffer {
 	const header = protobufField(1, "2.0");
 	const descriptor = protobufField(1, tripId);
-	const tripUpdate = protobufField(1, descriptor);
+	const stopTimeUpdates = Array.from({ length: stopTimeUpdateCount }, (_, index) => Buffer.concat([
+		protobufVarintField(1, index + 1),
+		protobufField(4, `stop-${index + 1}`),
+	]));
+	const tripUpdate = Buffer.concat([
+		protobufField(1, descriptor),
+		...stopTimeUpdates.map((stopTimeUpdate) => protobufField(2, stopTimeUpdate)),
+	]);
 	const entity = Buffer.concat([protobufField(1, updateId), protobufField(3, tripUpdate)]);
 	return Buffer.concat([protobufField(1, header), protobufField(2, entity)]);
 }
 
-function makeVehicleFeedWithCarriages(): Buffer {
+function makeVehicleFeedWithCarriages(updateId = "vehicle-1", tripId = "trip-1"): Buffer {
 	const carriage = (id: string, label: string, occupancy: number, percentage: number, sequence: number) => Buffer.concat([
 		protobufField(1, id), protobufField(2, label),
-		Buffer.from([(3 << 3) | 0, occupancy, (4 << 3) | 0, percentage, (5 << 3) | 0, sequence]),
+		protobufVarintField(3, occupancy),
+		protobufVarintField(4, percentage),
+		protobufVarintField(5, sequence),
 	]);
 	const vehicle = Buffer.concat([
+		protobufField(1, protobufField(1, tripId)),
+		protobufField(8, protobufField(1, updateId)),
 		protobufField(11, carriage("VL131-A", "A", 1, 35, 1)),
 		protobufField(11, carriage("VL131-B", "B", 2, 70, 2)),
 	]);
-	const entity = Buffer.concat([protobufField(1, "vehicle-1"), protobufField(4, vehicle)]);
+	const entity = Buffer.concat([protobufField(1, updateId), protobufField(4, vehicle)]);
 	return Buffer.concat([protobufField(1, protobufField(1, "2.0")), protobufField(2, entity)]);
 }
 
-function testMultiCarriageDetails() {
-	assert.deepEqual(parseGtfsRtMultiCarriageDetails(makeVehicleFeedWithCarriages()).get("vehicle-1"), [
-		{ id: "VL131-A", label: "A", occupancy_status: 1, occupancy_percentage: 35, carriage_sequence: 1 },
-		{ id: "VL131-B", label: "B", occupancy_status: 2, occupancy_percentage: 70, carriage_sequence: 2 },
+function makeAlertFeed(updateId: string): Buffer {
+	const entity = Buffer.concat([protobufField(1, updateId), protobufField(5, Buffer.alloc(0))]);
+	return Buffer.concat([protobufField(1, protobufField(1, "2.0")), protobufField(2, entity)]);
+}
+
+async function testRealtimeIndexesAndRefreshResult() {
+	const gtfs = new GTFS();
+	const first = gtfs.updateRealtime({
+		kind: "vehicles",
+		data: makeVehicleFeedWithCarriages("vehicle-a", "shared-trip"),
+		targetFeedId: "feed-a",
+		sourceId: "source-a",
+	});
+	assert.deepEqual(first, {
+		changed_trip_ids: [{ trip_id: "shared-trip", feed_id: "feed-a" }],
+		trip_update_count: 0,
+		stop_time_update_count: 0,
+		vehicle_count: 1,
+		realtime_revision: 1,
+	});
+	assert.deepEqual(gtfs.getRealtimeVehiclePositions({ trip_id: "shared-trip" }).map((vehicle) => ({
+		update_id: vehicle.update_id,
+		trip_id: vehicle.trip.trip_id,
+		carriages: vehicle.multi_carriage_details,
+	})), [
+		{
+			update_id: "vehicle-a",
+			trip_id: "shared-trip",
+			carriages: [
+				{ id: "VL131-A", label: "A", occupancy_status: 1, occupancy_percentage: 35, carriage_sequence: 1 },
+				{ id: "VL131-B", label: "B", occupancy_status: 2, occupancy_percentage: 70, carriage_sequence: 2 },
+			],
+		},
 	]);
+
+	const second = gtfs.updateRealtime({
+		kind: "vehicles",
+		data: makeVehicleFeedWithCarriages("vehicle-b", "shared-trip"),
+		targetFeedId: "feed-b",
+		sourceId: "source-b",
+	});
+	assert.deepEqual(second.changed_trip_ids, [{ trip_id: "shared-trip", feed_id: "feed-b" }]);
+	assert.equal(gtfs.getRealtimeVehiclePositions({ trip_id: "shared-trip" }).length, 2);
+
+	const replacement = gtfs.updateRealtime({
+		kind: "vehicles",
+		data: makeVehicleFeedWithCarriages("vehicle-a2", "replacement-trip"),
+		targetFeedId: "feed-a",
+		sourceId: "source-a",
+	});
+	assert.deepEqual(replacement.changed_trip_ids, [
+		{ trip_id: "shared-trip", feed_id: "feed-a" },
+		{ trip_id: "replacement-trip", feed_id: "feed-a" },
+	]);
+	assert.equal(gtfs.getRealtimeVehiclePositions({ trip_id: "shared-trip" }).length, 1);
+	assert.equal(gtfs.getRealtimeVehiclePositions({ trip_id: "replacement-trip" }).length, 1);
+
+	gtfs.clearRealtime({ sourceId: "source-b" });
+	assert.equal(gtfs.getRealtimeVehiclePositions({ trip_id: "shared-trip" }).length, 0);
+	assert.equal(gtfs.getRealtimeVehiclePositions().length, 1);
+
+	gtfs.updateRealtime({
+		kind: "vehicles",
+		data: makeVehicleFeedWithCarriages("vehicle-shared-a", "feed-a-trip"),
+		targetFeedId: "feed-a",
+		sourceId: "source-shared",
+	});
+	gtfs.updateRealtime({
+		kind: "vehicles",
+		data: makeVehicleFeedWithCarriages("vehicle-shared-b", "feed-b-trip"),
+		targetFeedId: "feed-b",
+		sourceId: "source-shared",
+	});
+	assert.equal(gtfs.getRealtimeVehiclePositions({ source_id: "source-shared" }).length, 2);
+	const sharedSourceReplacement = gtfs.updateRealtime({
+		kind: "vehicles",
+		data: makeVehicleFeedWithCarriages("vehicle-shared-a2", "feed-a-replacement"),
+		targetFeedId: "feed-a",
+		sourceId: "source-shared",
+	});
+	assert.deepEqual(sharedSourceReplacement.changed_trip_ids, [
+		{ trip_id: "feed-a-trip", feed_id: "feed-a" },
+		{ trip_id: "feed-a-replacement", feed_id: "feed-a" },
+	]);
+	assert.deepEqual(
+		gtfs.getRealtimeVehiclePositions({ feed_id: "feed-a", source_id: "source-shared" }).map((vehicle) => vehicle.update_id),
+		["vehicle-shared-a2"],
+	);
+	assert.deepEqual(
+		gtfs.getRealtimeVehiclePositions({ feed_id: "feed-b", source_id: "source-shared" }).map((vehicle) => vehicle.update_id),
+		["vehicle-shared-b"],
+	);
+	gtfs.clearRealtime({ targetFeedId: "feed-a", sourceId: "source-shared" });
+	assert.equal(gtfs.getRealtimeVehiclePositions({ feed_id: "feed-a", source_id: "source-shared" }).length, 0);
+	assert.equal(gtfs.getRealtimeVehiclePositions({ feed_id: "feed-b", source_id: "source-shared" }).length, 1);
+
+	gtfs.updateRealtime({
+		kind: "alerts",
+		data: makeAlertFeed("alert-a"),
+		targetFeedId: "feed-a",
+		sourceId: "source-alert",
+	});
+	assert.equal(gtfs.getRealtimeAlerts({ source_id: "source-alert" }).length, 1);
+	gtfs.clearRealtime({ sourceId: "source-alert" });
+	assert.equal(gtfs.getRealtimeAlerts({ source_id: "source-alert" }).length, 0);
 }
 
 async function testQualifiedIdentityAndRealtimeProvenance() {
@@ -285,18 +400,29 @@ async function testQualifiedIdentityAndRealtimeProvenance() {
 	]);
 	assert.deepEqual(gtfs.getStaticOccupancies({ feed_id: "feed-a", trip_id: "shared-trip", date: "20260804" }), []);
 
-	gtfs.updateRealtime({
+	const firstRefresh = gtfs.updateRealtime({
 		kind: "trip-updates",
-		data: makeTripUpdateFeed("a-1", "shared-trip"),
+		data: makeTripUpdateFeed("a-1", "shared-trip", 2),
 		targetFeedId: "feed-a",
 		sourceId: "source-a",
 	});
-	gtfs.updateRealtime({
+	assert.deepEqual(firstRefresh, {
+		changed_trip_ids: [{ trip_id: "shared-trip", feed_id: "feed-a" }],
+		trip_update_count: 1,
+		stop_time_update_count: 2,
+		vehicle_count: 0,
+		realtime_revision: 1,
+	});
+	const secondRefresh = gtfs.updateRealtime({
 		kind: "trip-updates",
 		data: makeTripUpdateFeed("b-1", "shared-trip"),
 		targetFeedId: "feed-b",
 		sourceId: "source-b",
 	});
+	assert.deepEqual(secondRefresh.changed_trip_ids, [{ trip_id: "shared-trip", feed_id: "feed-b" }]);
+	assert.equal(secondRefresh.trip_update_count, 1);
+	assert.equal(secondRefresh.stop_time_update_count, 0);
+	assert.equal(secondRefresh.realtime_revision, 2);
 	assert.deepEqual(
 		gtfs.getRealtimeTripUpdates().map(({ update_id, feed_id, source_id }) => ({ update_id, feed_id, source_id })),
 		[
@@ -341,6 +467,69 @@ async function testTripStopTimeIndexAcrossFeeds() {
 	assert.deepEqual(
 		gtfs.getStopTimes({ trip_id: "reused-trip", feed_id: "feed-b" }).map(({ stop_id }) => stop_id),
 		["second-a"],
+	);
+}
+
+async function testStopTimeOrderingAndIndexes() {
+	const header = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n";
+	const first = createZip({
+		"stop_times.txt":
+			header +
+			"trip-b,10:00:00,10:00:00,shared-stop,2\n" +
+			"trip-a,09:00:00,09:00:00,trip-a-3,3\n" +
+			"trip-b,08:00:00,08:00:00,shared-stop,1\n" +
+			"trip-a,07:00:00,07:00:00,trip-a-1,1\n" +
+			"trip-a,08:00:00,08:00:00,trip-a-2,2\n",
+	});
+	const second = createZip({
+		"stop_times.txt":
+			header +
+			"trip-b,12:00:00,12:00:00,shared-stop,2\n" +
+			"trip-c,13:00:00,13:00:00,trip-c-1,1\n" +
+			"trip-b,11:00:00,11:00:00,shared-stop,1\n",
+	});
+	const gtfs = new GTFS({ filesToLoad: ["stop_times.txt"] });
+	await gtfs.loadFromBuffers([first, second], ["feed-a", "feed-b"]);
+
+	assert.deepEqual(
+		gtfs.getStopTimes().map(({ feed_id, trip_id, stop_id, stop_sequence }) => ({
+			feed_id,
+			trip_id,
+			stop_id,
+			stop_sequence,
+		})),
+		[
+			{ feed_id: "feed-a", trip_id: "trip-b", stop_id: "shared-stop", stop_sequence: 1 },
+			{ feed_id: "feed-a", trip_id: "trip-b", stop_id: "shared-stop", stop_sequence: 2 },
+			{ feed_id: "feed-a", trip_id: "trip-a", stop_id: "trip-a-1", stop_sequence: 1 },
+			{ feed_id: "feed-a", trip_id: "trip-a", stop_id: "trip-a-2", stop_sequence: 2 },
+			{ feed_id: "feed-a", trip_id: "trip-a", stop_id: "trip-a-3", stop_sequence: 3 },
+			{ feed_id: "feed-b", trip_id: "trip-b", stop_id: "shared-stop", stop_sequence: 1 },
+			{ feed_id: "feed-b", trip_id: "trip-b", stop_id: "shared-stop", stop_sequence: 2 },
+			{ feed_id: "feed-b", trip_id: "trip-c", stop_id: "trip-c-1", stop_sequence: 1 },
+		],
+	);
+	assert.deepEqual(
+		gtfs.getStopTimes({ trip_id: "trip-b" }).map(({ feed_id, stop_sequence }) => ({ feed_id, stop_sequence })),
+		[
+			{ feed_id: "feed-a", stop_sequence: 1 },
+			{ feed_id: "feed-a", stop_sequence: 2 },
+			{ feed_id: "feed-b", stop_sequence: 1 },
+			{ feed_id: "feed-b", stop_sequence: 2 },
+		],
+	);
+	assert.deepEqual(
+		gtfs.getStopTimes({ stop_id: "shared-stop" }).map(({ feed_id, trip_id, stop_sequence }) => ({
+			feed_id,
+			trip_id,
+			stop_sequence,
+		})),
+		[
+			{ feed_id: "feed-a", trip_id: "trip-b", stop_sequence: 1 },
+			{ feed_id: "feed-a", trip_id: "trip-b", stop_sequence: 2 },
+			{ feed_id: "feed-b", trip_id: "trip-b", stop_sequence: 1 },
+			{ feed_id: "feed-b", trip_id: "trip-b", stop_sequence: 2 },
+		],
 	);
 }
 
@@ -499,10 +688,11 @@ async function testIndexedLookupScaling() {
 await testShapeFiltersAndMergeStrategies();
 await testQualifiedIdentityAndRealtimeProvenance();
 await testTripStopTimeIndexAcrossFeeds();
+await testStopTimeOrderingAndIndexes();
 await testTripStopTimeBatchIndex();
 await testTripStopTimeBoundsAcrossFeeds();
 testFeedIdentityValidation();
 testNestedArchiveExtraction();
-testMultiCarriageDetails();
+await testRealtimeIndexesAndRefreshResult();
 await testIndexedLookupScaling();
 console.log("All QDF-GTFS tests passed.");

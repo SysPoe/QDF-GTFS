@@ -281,6 +281,26 @@ struct RealtimeVehicleDescriptor {
     std::string license_plate;
 };
 
+struct RealtimeCarriageDetails {
+    std::string id;
+    std::string label;
+    int occupancy_status = -1;
+    int occupancy_percentage = -1;
+    int carriage_sequence = -1;
+};
+
+struct RealtimeChangedTrip {
+    std::string trip_id;
+    std::string feed_id;
+};
+
+struct RealtimeParseResult {
+    std::vector<RealtimeChangedTrip> changed_trip_ids;
+    size_t trip_update_count = 0;
+    size_t stop_time_update_count = 0;
+    size_t vehicle_count = 0;
+};
+
 struct RealtimeStopTimeUpdate {
     int stop_sequence = -1;
     std::string stop_id;
@@ -333,6 +353,7 @@ struct RealtimeVehiclePosition {
     int congestion_level = -1;
     int occupancy_status = -1;
     int occupancy_percentage = -1;
+    std::vector<RealtimeCarriageDetails> multi_carriage_details;
     std::string feed_id;
     std::string source_id;
 };
@@ -359,6 +380,15 @@ public:
     std::vector<RealtimeTripUpdate> realtime_trip_updates;
     std::vector<RealtimeVehiclePosition> realtime_vehicle_positions;
     std::vector<RealtimeAlert> realtime_alerts;
+    uint64_t realtime_revision = 0;
+
+    // Vector positions keep the existing storage and retrieval order stable.
+    // They are rebuilt after an erase because vector compaction shifts rows.
+    std::unordered_map<std::string, std::vector<size_t>> realtime_trip_updates_by_trip_id;
+    std::unordered_map<std::string, std::vector<size_t>> realtime_trip_updates_by_source_id;
+    std::unordered_map<std::string, std::vector<size_t>> realtime_vehicle_positions_by_trip_id;
+    std::unordered_map<std::string, std::vector<size_t>> realtime_vehicle_positions_by_source_id;
+    std::unordered_map<std::string, std::vector<size_t>> realtime_alerts_by_source_id;
 
     std::unordered_map<std::string, std::unordered_map<std::string, Agency>> agencies;
     std::unordered_map<std::string, std::unordered_map<std::string, Calendar>> calendars;
@@ -392,6 +422,50 @@ public:
     // O(1) trip lookup by (feed_id_intern << 32 | trip_id_intern)
     std::unordered_map<uint64_t, const Trip*> trip_by_intern_id;
 
+    void clearRealtimeIndexes() {
+        realtime_trip_updates_by_trip_id.clear();
+        realtime_trip_updates_by_source_id.clear();
+        realtime_vehicle_positions_by_trip_id.clear();
+        realtime_vehicle_positions_by_source_id.clear();
+        realtime_alerts_by_source_id.clear();
+    }
+
+    void indexRealtimeTripUpdate(size_t index) {
+        const auto& update = realtime_trip_updates[index];
+        realtime_trip_updates_by_trip_id[update.trip.trip_id].push_back(index);
+        realtime_trip_updates_by_source_id[update.source_id].push_back(index);
+    }
+
+    void indexRealtimeVehiclePosition(size_t index) {
+        const auto& position = realtime_vehicle_positions[index];
+        realtime_vehicle_positions_by_trip_id[position.trip.trip_id].push_back(index);
+        realtime_vehicle_positions_by_source_id[position.source_id].push_back(index);
+    }
+
+    void indexRealtimeAlert(size_t index) {
+        realtime_alerts_by_source_id[realtime_alerts[index].source_id].push_back(index);
+    }
+
+    void rebuildRealtimeIndexes() {
+        clearRealtimeIndexes();
+        for (size_t index = 0; index < realtime_trip_updates.size(); ++index) {
+            indexRealtimeTripUpdate(index);
+        }
+        for (size_t index = 0; index < realtime_vehicle_positions.size(); ++index) {
+            indexRealtimeVehiclePosition(index);
+        }
+        for (size_t index = 0; index < realtime_alerts.size(); ++index) {
+            indexRealtimeAlert(index);
+        }
+    }
+
+    void clearRealtime() {
+        realtime_trip_updates.clear();
+        realtime_vehicle_positions.clear();
+        realtime_alerts.clear();
+        clearRealtimeIndexes();
+    }
+
     void clear() {
         string_pool.clear();
         agencies.clear();
@@ -414,9 +488,8 @@ public:
         feed_info.clear();
         trip_by_intern_id.clear();
 
-        realtime_trip_updates.clear();
-        realtime_vehicle_positions.clear();
-        realtime_alerts.clear();
+        clearRealtime();
+        realtime_revision = 0;
     }
 };
 

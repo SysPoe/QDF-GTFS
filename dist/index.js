@@ -38,7 +38,9 @@ try {
                     getShapes() { return []; }
                     getCalendars() { return []; }
                     getCalendarDates() { return []; }
-                    updateRealtime() { }
+                    updateRealtime() {
+                        return { changed_trip_ids: [], trip_update_count: 0, stop_time_update_count: 0, vehicle_count: 0, realtime_revision: 0 };
+                    }
                     getRealtimeTripUpdates() { return []; }
                     getRealtimeVehiclePositions() { return []; }
                     getRealtimeAlerts() { return []; }
@@ -132,7 +134,12 @@ function protobufScalar(buffer, fieldNumber) {
 function protobufString(buffer, fieldNumber) {
     return protobufMessages(buffer, fieldNumber)[0]?.toString('utf8') ?? '';
 }
-/** Parse experimental GTFS-RT VehiclePosition.multi_carriage_details (field 11). */
+/**
+ * Decode carriage details from a standalone vehicle feed.
+ *
+ * @deprecated GTFS.updateRealtime parses these details natively. Keep this
+ * helper for callers that still decode a raw vehicle feed directly.
+ */
 export function parseGtfsRtMultiCarriageDetails(feed) {
     const result = new Map();
     for (const entity of protobufMessages(feed, 2)) {
@@ -220,7 +227,6 @@ export class GTFS {
     serviceDatesSets = null;
     serviceIdsByDateCache = null;
     tripsByServiceIdCache = null;
-    realtimeCarriages = new Map();
     actions = {
         mergeStops: (targetStopId, sourceStopIds, feed_id) => {
             this.addonInstance.mergeStops(targetStopId, sourceStopIds, feed_id);
@@ -565,25 +571,16 @@ export class GTFS {
             return [];
         return this.getServiceDates({ feedId: trips[0].feed_id, localId: trips[0].service_id });
     }
+    /** Replace the supplied realtime source and return compact change metadata. */
     updateRealtime(input) {
-        if (input.kind === "vehicles") {
-            for (const key of this.realtimeCarriages.keys())
-                if (key.startsWith(`${input.sourceId}\0`))
-                    this.realtimeCarriages.delete(key);
-            const buffers = Array.isArray(input.data) ? input.data : [input.data];
-            for (const buffer of buffers)
-                for (const [entityId, carriages] of parseGtfsRtMultiCarriageDetails(buffer)) {
-                    this.realtimeCarriages.set(`${input.sourceId}\0${entityId}`, carriages);
-                }
-        }
-        this.addonInstance.updateRealtime(input.kind === "alerts" ? input.data : [], input.kind === "trip-updates" ? input.data : [], input.kind === "vehicles" ? input.data : [], input.targetFeedId, input.sourceId);
+        return this.addonInstance.updateRealtime(input.kind === "alerts" ? input.data : [], input.kind === "trip-updates" ? input.data : [], input.kind === "vehicles" ? input.data : [], input.targetFeedId, input.sourceId);
     }
     async updateRealtimeFromUrl(sources) {
         return Promise.all(sources.map(async (source) => {
             try {
                 const data = await this.download(source.url, `Downloading ${source.kind}`, false, source.headers);
-                this.updateRealtime({ kind: source.kind, data, targetFeedId: source.targetFeedId, sourceId: source.id });
-                return { id: source.id, ok: true };
+                const refresh = this.updateRealtime({ kind: source.kind, data, targetFeedId: source.targetFeedId, sourceId: source.id });
+                return { id: source.id, ok: true, refresh };
             }
             catch (error) {
                 return { id: source.id, ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -594,23 +591,13 @@ export class GTFS {
         return this.addonInstance.getRealtimeTripUpdates(filter || {});
     }
     getRealtimeVehiclePositions(filter) {
-        return this.addonInstance.getRealtimeVehiclePositions(filter || {}).map((vehicle) => ({
-            ...vehicle,
-            multi_carriage_details: this.realtimeCarriages.get(`${vehicle.source_id}\0${vehicle.update_id}`) ?? [],
-        }));
+        return this.addonInstance.getRealtimeVehiclePositions(filter || {});
     }
     getRealtimeAlerts(filter) {
         return this.addonInstance.getRealtimeAlerts(filter || {});
     }
     clearRealtime(filter = {}) {
         this.addonInstance.clearRealtime(filter.targetFeedId || "", filter.sourceId || "");
-        if (filter.sourceId) {
-            for (const key of this.realtimeCarriages.keys())
-                if (key.startsWith(`${filter.sourceId}\0`))
-                    this.realtimeCarriages.delete(key);
-        }
-        else
-            this.realtimeCarriages.clear();
     }
     download(url, taskName = "Downloading", showProgressBar = true, headers, redirects = 0, connectionAttempt = 0) {
         return new Promise((resolve, reject) => {

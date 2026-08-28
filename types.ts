@@ -176,7 +176,28 @@ export interface GTFSStaticLoadResult {
 export interface GTFSRealtimeLoadResult {
 	id: string;
 	ok: boolean;
+	refresh?: GTFSRealtimeUpdateResult;
 	error?: string;
+}
+
+export interface RealtimeChangedTrip {
+	trip_id: string;
+	feed_id: string;
+}
+
+/**
+ * Compact metadata returned after one native realtime replacement.
+ * `changed_trip_ids` includes trips removed during source replacement and
+ * trips present in the new payload. Counts describe entities parsed from the
+ * supplied payloads, while `realtime_revision` identifies the resulting
+ * realtime snapshot.
+ */
+export interface GTFSRealtimeUpdateResult {
+	changed_trip_ids: RealtimeChangedTrip[];
+	trip_update_count: number;
+	stop_time_update_count: number;
+	vehicle_count: number;
+	realtime_revision: number;
 }
 
 /** A collision-safe reference to an entity inside one static GTFS dataset. */

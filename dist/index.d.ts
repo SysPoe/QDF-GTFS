@@ -1,6 +1,11 @@
-import { Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery } from './types.js';
+import { Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery } from './types.js';
 export * from './types.js';
-/** Parse experimental GTFS-RT VehiclePosition.multi_carriage_details (field 11). */
+/**
+ * Decode carriage details from a standalone vehicle feed.
+ *
+ * @deprecated GTFS.updateRealtime parses these details natively. Keep this
+ * helper for callers that still decode a raw vehicle feed directly.
+ */
 export declare function parseGtfsRtMultiCarriageDetails(feed: Buffer): Map<string, import('./types.js').RealtimeCarriageDetails[]>;
 /** Extract one file from a ZIP without adding a second ZIP dependency. */
 export declare function extractZipEntry(archive: Buffer, requestedEntry: string): Buffer;
@@ -22,7 +27,6 @@ export declare class GTFS {
     private serviceDatesSets;
     private serviceIdsByDateCache;
     private tripsByServiceIdCache;
-    private realtimeCarriages;
     actions: GTFSActions;
     constructor(options?: GTFSOptions);
     private showProgress;
@@ -46,12 +50,13 @@ export declare class GTFS {
     getCalendarDates(filter?: Partial<CalendarDate>): CalendarDate[];
     getServiceDates(service: QualifiedEntityId): string[];
     getServiceDatesByTrip(trip: QualifiedEntityId): string[];
+    /** Replace the supplied realtime source and return compact change metadata. */
     updateRealtime(input: {
         kind: GTFSRealtimeFeedConfig["kind"];
         data: Buffer | Buffer[];
         targetFeedId: string;
         sourceId: string;
-    }): void;
+    }): GTFSRealtimeUpdateResult;
     updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[]): Promise<GTFSRealtimeLoadResult[]>;
     getRealtimeTripUpdates(filter?: RealtimeFilter): RealtimeTripUpdate[];
     getRealtimeVehiclePositions(filter?: RealtimeFilter): RealtimeVehiclePosition[];

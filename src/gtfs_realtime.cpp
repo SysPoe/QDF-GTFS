@@ -54,6 +54,7 @@ struct RealtimeParseContext {
     GTFSData* data;
     std::string feed_id;
     std::string source_id;
+    RealtimeParseResult* result;
 };
 
 // --- Main Parsing Functions ---
@@ -79,9 +80,77 @@ void setup_translated_string_decoding(GTFSv2_Realtime_TranslatedString& ts, std:
     ts.translation.arg = target;
 }
 
+bool decode_carriage_string(pb_istream_t* stream, std::string& target) {
+    const size_t length = stream->bytes_left;
+    target.resize(length);
+    return pb_read(stream, reinterpret_cast<pb_byte_t*>(target.data()), length);
+}
+
+bool decode_carriage_details(pb_istream_t* stream, const pb_field_t* field, void** arg) {
+    (void)field;
+    auto* ctx = static_cast<VehiclePositionContext*>(*arg);
+    RealtimeCarriageDetails carriage;
+    pb_wire_type_t wire_type;
+    uint32_t tag;
+    bool eof = false;
+
+    while (pb_decode_tag(stream, &wire_type, &tag, &eof)) {
+        switch (tag) {
+            case 1: {
+                if (wire_type != PB_WT_STRING) return false;
+                pb_istream_t value_stream;
+                if (!pb_make_string_substream(stream, &value_stream)) return false;
+                const bool ok = decode_carriage_string(&value_stream, carriage.id);
+                if (!pb_close_string_substream(stream, &value_stream)) return false;
+                if (!ok) return false;
+                break;
+            }
+            case 2: {
+                if (wire_type != PB_WT_STRING) return false;
+                pb_istream_t value_stream;
+                if (!pb_make_string_substream(stream, &value_stream)) return false;
+                const bool ok = decode_carriage_string(&value_stream, carriage.label);
+                if (!pb_close_string_substream(stream, &value_stream)) return false;
+                if (!ok) return false;
+                break;
+            }
+            case 3: {
+                if (wire_type != PB_WT_VARINT) return false;
+                uint32_t value;
+                if (!pb_decode_varint32(stream, &value)) return false;
+                carriage.occupancy_status = static_cast<int>(value);
+                break;
+            }
+            case 4: {
+                if (wire_type != PB_WT_VARINT) return false;
+                uint32_t value;
+                if (!pb_decode_varint32(stream, &value)) return false;
+                carriage.occupancy_percentage = static_cast<int>(value);
+                break;
+            }
+            case 5: {
+                if (wire_type != PB_WT_VARINT) return false;
+                uint32_t value;
+                if (!pb_decode_varint32(stream, &value)) return false;
+                carriage.carriage_sequence = static_cast<int>(value);
+                break;
+            }
+            default:
+                if (!pb_skip_field(stream, wire_type)) return false;
+                break;
+        }
+    }
+    if (!eof) return false;
+
+    ctx->current_pos.multi_carriage_details.push_back(std::move(carriage));
+    return true;
+}
+
 
 // --- Main Entry Points ---
-void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, int type, const std::string& feed_id = "", const std::string& source_id = "") {
+RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, int type, const std::string& feed_id = "", const std::string& source_id = "") {
+    (void)type;
+    RealtimeParseResult result;
     GTFSv2_Realtime_FeedMessage message = GTFSv2_Realtime_FeedMessage_init_zero;
 
     message.entity.funcs.decode = [](pb_istream_t *stream, const pb_field_t *field, void **arg) -> bool {
@@ -227,6 +296,9 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
         entity.vehicle.stop_id.funcs.decode = decode_string;
         entity.vehicle.stop_id.arg = &vp_ctx.current_pos.stop_id;
 
+        entity.vehicle.multi_carriage_details.funcs.decode = decode_carriage_details;
+        entity.vehicle.multi_carriage_details.arg = &vp_ctx;
+
 
         setup_translated_string_decoding(entity.alert.header_text, &al_ctx.current_alert.header_text);
         setup_translated_string_decoding(entity.alert.description_text, &al_ctx.current_alert.description_text);
@@ -256,7 +328,17 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
                 }
             }
 
-            tu_ctx.data->realtime_trip_updates.push_back(tu_ctx.current_update);
+            const size_t index = tu_ctx.data->realtime_trip_updates.size();
+            tu_ctx.data->realtime_trip_updates.push_back(std::move(tu_ctx.current_update));
+            tu_ctx.data->indexRealtimeTripUpdate(index);
+            ctx->result->trip_update_count++;
+            ctx->result->stop_time_update_count += tu_ctx.data->realtime_trip_updates[index].stop_time_updates.size();
+            if (!tu_ctx.data->realtime_trip_updates[index].trip.trip_id.empty()) {
+                ctx->result->changed_trip_ids.push_back({
+                    tu_ctx.data->realtime_trip_updates[index].trip.trip_id,
+                    tu_ctx.data->realtime_trip_updates[index].feed_id,
+                });
+            }
         }
 
         if (entity.has_vehicle) {
@@ -299,7 +381,16 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
                  if (entity.vehicle.position.has_speed) vp_ctx.current_pos.position.speed = entity.vehicle.position.speed;
                  else vp_ctx.current_pos.position.speed = -1.0f;
              }
-             vp_ctx.data->realtime_vehicle_positions.push_back(vp_ctx.current_pos);
+             const size_t index = vp_ctx.data->realtime_vehicle_positions.size();
+             vp_ctx.data->realtime_vehicle_positions.push_back(std::move(vp_ctx.current_pos));
+             vp_ctx.data->indexRealtimeVehiclePosition(index);
+             ctx->result->vehicle_count++;
+             if (!vp_ctx.data->realtime_vehicle_positions[index].trip.trip_id.empty()) {
+                 ctx->result->changed_trip_ids.push_back({
+                     vp_ctx.data->realtime_vehicle_positions[index].trip.trip_id,
+                     vp_ctx.data->realtime_vehicle_positions[index].feed_id,
+                 });
+             }
         }
 
         if (entity.has_alert) {
@@ -315,7 +406,9 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
             if (entity.alert.has_severity_level) al_ctx.current_alert.severity_level = entity.alert.severity_level;
             else al_ctx.current_alert.severity_level = -1;
 
-            al_ctx.data->realtime_alerts.push_back(al_ctx.current_alert);
+            const size_t index = al_ctx.data->realtime_alerts.size();
+            al_ctx.data->realtime_alerts.push_back(std::move(al_ctx.current_alert));
+            al_ctx.data->indexRealtimeAlert(index);
         }
 
         return true;
@@ -324,12 +417,14 @@ void parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, i
     ctx.data = &data;
     ctx.feed_id = feed_id;
     ctx.source_id = source_id;
+    ctx.result = &result;
     message.entity.arg = &ctx;
 
     pb_istream_t stream = pb_istream_from_buffer(buf, len);
     if (!pb_decode(&stream, GTFSv2_Realtime_FeedMessage_fields, &message)) {
         std::cerr << "Failed to parse protobuf: " << PB_GET_ERROR(&stream) << std::endl;
     }
+    return result;
 }
 
 }

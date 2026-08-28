@@ -9,7 +9,7 @@ import { inflateRawSync } from 'zlib';
 import {
     Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
-    GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSActions, QualifiedEntityId,
+    GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId,
     RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery
 } from './types.js';
 
@@ -45,7 +45,9 @@ try {
                     getShapes() { return []; }
                     getCalendars() { return []; }
                     getCalendarDates() { return []; }
-                    updateRealtime() { }
+                    updateRealtime() {
+                        return { changed_trip_ids: [], trip_update_count: 0, stop_time_update_count: 0, vehicle_count: 0, realtime_revision: 0 };
+                    }
                     getRealtimeTripUpdates() { return []; }
                     getRealtimeVehiclePositions() { return []; }
                     getRealtimeAlerts() { return []; }
@@ -118,8 +120,7 @@ function protobufScalar(buffer: Buffer, fieldNumber: number): number | null {
         else if (wire === 2) {
             const length = readVarint(buffer, cursor);
             cursor.offset += length;
-        }
-        else if (wire === 5) cursor.offset += 4;
+        } else if (wire === 5) cursor.offset += 4;
         else throw new Error(`Unsupported GTFS-RT protobuf wire type ${wire}`);
     }
     return null;
@@ -129,7 +130,12 @@ function protobufString(buffer: Buffer, fieldNumber: number): string {
     return protobufMessages(buffer, fieldNumber)[0]?.toString('utf8') ?? '';
 }
 
-/** Parse experimental GTFS-RT VehiclePosition.multi_carriage_details (field 11). */
+/**
+ * Decode carriage details from a standalone vehicle feed.
+ *
+ * @deprecated GTFS.updateRealtime parses these details natively. Keep this
+ * helper for callers that still decode a raw vehicle feed directly.
+ */
 export function parseGtfsRtMultiCarriageDetails(
     feed: Buffer,
 ): Map<string, import('./types.js').RealtimeCarriageDetails[]> {
@@ -219,8 +225,6 @@ export class GTFS {
     private serviceDatesSets: Map<string, Set<string>> | null = null;
     private serviceIdsByDateCache: Map<string, QualifiedEntityId[]> | null = null;
     private tripsByServiceIdCache: Map<string, Trip[]> | null = null;
-    private realtimeCarriages = new Map<string, import('./types.js').RealtimeCarriageDetails[]>();
-
     public actions: GTFSActions = {
         mergeStops: (targetStopId: string, sourceStopIds: string[], feed_id: string) => {
             this.addonInstance.mergeStops(targetStopId, sourceStopIds, feed_id);
@@ -594,22 +598,16 @@ export class GTFS {
         return this.getServiceDates({ feedId: trips[0].feed_id, localId: trips[0].service_id });
     }
 
-    updateRealtime(input: {
-        kind: GTFSRealtimeFeedConfig["kind"];
-        data: Buffer | Buffer[];
-        targetFeedId: string;
-        sourceId: string;
-    }): void {
-		if (input.kind === "vehicles") {
-			for (const key of this.realtimeCarriages.keys()) if (key.startsWith(`${input.sourceId}\0`)) this.realtimeCarriages.delete(key);
-			const buffers = Array.isArray(input.data) ? input.data : [input.data];
-			for (const buffer of buffers) for (const [entityId, carriages] of parseGtfsRtMultiCarriageDetails(buffer)) {
-				this.realtimeCarriages.set(`${input.sourceId}\0${entityId}`, carriages);
-			}
-		}
-        this.addonInstance.updateRealtime(
-            input.kind === "alerts" ? input.data : [],
-            input.kind === "trip-updates" ? input.data : [],
+	/** Replace the supplied realtime source and return compact change metadata. */
+	updateRealtime(input: {
+		kind: GTFSRealtimeFeedConfig["kind"];
+		data: Buffer | Buffer[];
+		targetFeedId: string;
+		sourceId: string;
+	}): GTFSRealtimeUpdateResult {
+		return this.addonInstance.updateRealtime(
+			input.kind === "alerts" ? input.data : [],
+			input.kind === "trip-updates" ? input.data : [],
             input.kind === "vehicles" ? input.data : [],
             input.targetFeedId,
             input.sourceId,
@@ -620,8 +618,8 @@ export class GTFS {
 		return Promise.all(sources.map(async (source) => {
 			try {
 				const data = await this.download(source.url, `Downloading ${source.kind}`, false, source.headers);
-				this.updateRealtime({ kind: source.kind, data, targetFeedId: source.targetFeedId, sourceId: source.id });
-				return { id: source.id, ok: true };
+				const refresh = this.updateRealtime({ kind: source.kind, data, targetFeedId: source.targetFeedId, sourceId: source.id });
+				return { id: source.id, ok: true, refresh };
 			} catch (error) {
 				return { id: source.id, ok: false, error: error instanceof Error ? error.message : String(error) };
 			}
@@ -633,10 +631,7 @@ export class GTFS {
     }
 
     getRealtimeVehiclePositions(filter?: RealtimeFilter): RealtimeVehiclePosition[] {
-		return this.addonInstance.getRealtimeVehiclePositions(filter || {}).map((vehicle: RealtimeVehiclePosition) => ({
-			...vehicle,
-			multi_carriage_details: this.realtimeCarriages.get(`${vehicle.source_id}\0${vehicle.update_id}`) ?? [],
-		}));
+        return this.addonInstance.getRealtimeVehiclePositions(filter || {});
     }
 
     getRealtimeAlerts(filter?: RealtimeFilter): RealtimeAlert[] {
@@ -645,10 +640,7 @@ export class GTFS {
 
     clearRealtime(filter: { targetFeedId?: string; sourceId?: string } = {}): void {
         this.addonInstance.clearRealtime(filter.targetFeedId || "", filter.sourceId || "");
-		if (filter.sourceId) {
-			for (const key of this.realtimeCarriages.keys()) if (key.startsWith(`${filter.sourceId}\0`)) this.realtimeCarriages.delete(key);
-		} else this.realtimeCarriages.clear();
-    }
+	}
 
     private download(
         url: string,

@@ -475,6 +475,8 @@ typedef struct _GTFSv2_Realtime_VehiclePosition {
  This field is still experimental, and subject to change. It may be formally adopted in the future. */
     bool has_occupancy_percentage;
     uint32_t occupancy_percentage;
+    /* Experimental repeated carriage details used by some vehicle feeds. */
+    pb_callback_t multi_carriage_details;
     pb_extension_t *extensions;
 } GTFSv2_Realtime_VehiclePosition;
 
@@ -660,7 +662,7 @@ extern "C" {
 #define GTFSv2_Realtime_TripUpdate_init_default  {GTFSv2_Realtime_TripDescriptor_init_default, {{NULL}, NULL}, false, GTFSv2_Realtime_VehicleDescriptor_init_default, false, 0, false, 0, NULL}
 #define GTFSv2_Realtime_TripUpdate_StopTimeEvent_init_default {false, 0, false, 0, false, 0, NULL}
 #define GTFSv2_Realtime_TripUpdate_StopTimeUpdate_init_default {false, 0, false, GTFSv2_Realtime_TripUpdate_StopTimeEvent_init_default, false, GTFSv2_Realtime_TripUpdate_StopTimeEvent_init_default, {{NULL}, NULL}, false, GTFSv2_Realtime_TripUpdate_StopTimeUpdate_ScheduleRelationship_SCHEDULED, NULL}
-#define GTFSv2_Realtime_VehiclePosition_init_default {false, GTFSv2_Realtime_TripDescriptor_init_default, false, GTFSv2_Realtime_Position_init_default, false, 0, false, GTFSv2_Realtime_VehiclePosition_VehicleStopStatus_IN_TRANSIT_TO, false, 0, false, _GTFSv2_Realtime_VehiclePosition_CongestionLevel_MIN, {{NULL}, NULL}, false, GTFSv2_Realtime_VehicleDescriptor_init_default, false, _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_MIN, false, 0, NULL}
+#define GTFSv2_Realtime_VehiclePosition_init_default {false, GTFSv2_Realtime_TripDescriptor_init_default, false, GTFSv2_Realtime_Position_init_default, false, 0, false, GTFSv2_Realtime_VehiclePosition_VehicleStopStatus_IN_TRANSIT_TO, false, 0, false, _GTFSv2_Realtime_VehiclePosition_CongestionLevel_MIN, {{NULL}, NULL}, false, GTFSv2_Realtime_VehicleDescriptor_init_default, false, _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_MIN, false, 0, {{NULL}, NULL}, NULL}
 #define GTFSv2_Realtime_Alert_init_default       {{{NULL}, NULL}, {{NULL}, NULL}, false, GTFSv2_Realtime_Alert_Cause_UNKNOWN_CAUSE, false, GTFSv2_Realtime_Alert_Effect_UNKNOWN_EFFECT, false, GTFSv2_Realtime_TranslatedString_init_default, false, GTFSv2_Realtime_TranslatedString_init_default, false, GTFSv2_Realtime_TranslatedString_init_default, false, GTFSv2_Realtime_TranslatedString_init_default, false, GTFSv2_Realtime_TranslatedString_init_default, false, GTFSv2_Realtime_Alert_SeverityLevel_UNKNOWN_SEVERITY, NULL}
 #define GTFSv2_Realtime_TimeRange_init_default   {false, 0, false, 0, NULL}
 #define GTFSv2_Realtime_Position_init_default    {0, 0, false, 0, false, 0, false, 0, NULL}
@@ -675,7 +677,7 @@ extern "C" {
 #define GTFSv2_Realtime_TripUpdate_init_zero     {GTFSv2_Realtime_TripDescriptor_init_zero, {{NULL}, NULL}, false, GTFSv2_Realtime_VehicleDescriptor_init_zero, false, 0, false, 0, NULL}
 #define GTFSv2_Realtime_TripUpdate_StopTimeEvent_init_zero {false, 0, false, 0, false, 0, NULL}
 #define GTFSv2_Realtime_TripUpdate_StopTimeUpdate_init_zero {false, 0, false, GTFSv2_Realtime_TripUpdate_StopTimeEvent_init_zero, false, GTFSv2_Realtime_TripUpdate_StopTimeEvent_init_zero, {{NULL}, NULL}, false, _GTFSv2_Realtime_TripUpdate_StopTimeUpdate_ScheduleRelationship_MIN, NULL}
-#define GTFSv2_Realtime_VehiclePosition_init_zero {false, GTFSv2_Realtime_TripDescriptor_init_zero, false, GTFSv2_Realtime_Position_init_zero, false, 0, false, _GTFSv2_Realtime_VehiclePosition_VehicleStopStatus_MIN, false, 0, false, _GTFSv2_Realtime_VehiclePosition_CongestionLevel_MIN, {{NULL}, NULL}, false, GTFSv2_Realtime_VehicleDescriptor_init_zero, false, _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_MIN, false, 0, NULL}
+#define GTFSv2_Realtime_VehiclePosition_init_zero {false, GTFSv2_Realtime_TripDescriptor_init_zero, false, GTFSv2_Realtime_Position_init_zero, false, 0, false, _GTFSv2_Realtime_VehiclePosition_VehicleStopStatus_MIN, false, 0, false, _GTFSv2_Realtime_VehiclePosition_CongestionLevel_MIN, {{NULL}, NULL}, false, GTFSv2_Realtime_VehicleDescriptor_init_zero, false, _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_MIN, false, 0, {{NULL}, NULL}, NULL}
 #define GTFSv2_Realtime_Alert_init_zero          {{{NULL}, NULL}, {{NULL}, NULL}, false, _GTFSv2_Realtime_Alert_Cause_MIN, false, _GTFSv2_Realtime_Alert_Effect_MIN, false, GTFSv2_Realtime_TranslatedString_init_zero, false, GTFSv2_Realtime_TranslatedString_init_zero, false, GTFSv2_Realtime_TranslatedString_init_zero, false, GTFSv2_Realtime_TranslatedString_init_zero, false, GTFSv2_Realtime_TranslatedString_init_zero, false, _GTFSv2_Realtime_Alert_SeverityLevel_MIN, NULL}
 #define GTFSv2_Realtime_TimeRange_init_zero      {false, 0, false, 0, NULL}
 #define GTFSv2_Realtime_Position_init_zero       {0, 0, false, 0, false, 0, false, 0, NULL}
@@ -730,6 +732,7 @@ extern "C" {
 #define GTFSv2_Realtime_VehiclePosition_vehicle_tag 8
 #define GTFSv2_Realtime_VehiclePosition_occupancy_status_tag 9
 #define GTFSv2_Realtime_VehiclePosition_occupancy_percentage_tag 10
+#define GTFSv2_Realtime_VehiclePosition_multi_carriage_details_tag 11
 #define GTFSv2_Realtime_EntitySelector_agency_id_tag 1
 #define GTFSv2_Realtime_EntitySelector_route_id_tag 2
 #define GTFSv2_Realtime_EntitySelector_route_type_tag 3
@@ -830,6 +833,7 @@ X(a, CALLBACK, OPTIONAL, STRING,   stop_id,           7) \
 X(a, STATIC,   OPTIONAL, MESSAGE,  vehicle,           8) \
 X(a, STATIC,   OPTIONAL, UENUM,    occupancy_status,   9) \
 X(a, STATIC,   OPTIONAL, UINT32,   occupancy_percentage,  10) \
+X(a, CALLBACK, REPEATED, BYTES,   multi_carriage_details, 11) \
 X(a, CALLBACK, OPTIONAL, EXTENSION, extensions,      1000)
 #define GTFSv2_Realtime_VehiclePosition_CALLBACK pb_default_field_callback
 #define GTFSv2_Realtime_VehiclePosition_DEFAULT (const pb_byte_t*)"\x20\x02\x00"
