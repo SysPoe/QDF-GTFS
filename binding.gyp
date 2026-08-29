@@ -15,6 +15,7 @@
       },
       "sources": [
         "src/addon.cpp",
+        "src/snapshot.cpp",
         "src/miniz.c",
         "src/nanopb/pb_common.c",
         "src/nanopb/pb_decode.c",

@@ -4,13 +4,14 @@ import * as fs from 'fs';
 import { createRequire } from 'module';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import * as os from 'os';
 import * as crypto from 'crypto';
 import { inflateRawSync } from 'zlib';
 import {
     Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
     GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId,
-    RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes
+    RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes, RealtimeChangedTrip
 } from './types.js';
 
 export * from './types.js';
@@ -219,6 +220,9 @@ export function extractZipEntry(archive: Buffer, requestedEntry: string): Buffer
     throw new Error(`ZIP archive entry '${entry}' was not found`);
 }
 
+const SNAPSHOT_VERSION = 2;
+const SNAPSHOT_MAGIC = "QDFS";
+
 export class GTFS {
     private addonInstance: any;
     private logger?: (msg: string) => void;
@@ -237,6 +241,8 @@ export class GTFS {
     private serviceDatesSets: Map<string, Set<string>> | null = null;
     private serviceIdsByDateCache: Map<string, QualifiedEntityId[]> | null = null;
     private tripsByServiceIdCache: Map<string, Trip[]> | null = null;
+    private lastChangedTripIds: RealtimeChangedTrip[] = [];
+    private lastRealtimeRevision: number = 0;
     public actions: GTFSActions = {
         mergeStops: (targetStopId: string, sourceStopIds: string[], feed_id: string) => {
             this.addonInstance.mergeStops(targetStopId, sourceStopIds, feed_id);
@@ -292,12 +298,64 @@ export class GTFS {
         }
     }
 
+    private computeSnapshotKey(buffers: Buffer[], feedIds: string[], effectiveFiles: string[]): string {
+        const hashes = buffers.map(b => crypto.createHash('sha256').update(b).digest('hex'));
+        const sortedFiles = [...effectiveFiles].sort();
+        const arch = `${os.arch()}-${os.endianness()}-${process.versions.node}`;
+        const keyInput = JSON.stringify({
+            v: SNAPSHOT_VERSION,
+            feedIds,
+            hashes,
+            mergeStrategy: this.mergeStrategy,
+            files: sortedFiles,
+            arch,
+        });
+        return crypto.createHash('sha256').update(keyInput).digest('hex');
+    }
+
+    private compiledSnapshotPath(key: string): string {
+        const base = this.cacheDir || './cache';
+        return path.join(base, 'compiled', `${key}.bin`);
+    }
+
+    private tryLoadCompiledSnapshot(key: string): boolean {
+        const p = this.compiledSnapshotPath(key);
+        if (!fs.existsSync(p)) return false;
+        try {
+            const stat = fs.statSync(p);
+            if (stat.size < 32) return false;
+            this.addonInstance.loadCompiledSnapshot(p);
+            this.serviceDatesCache = null;
+            this.serviceDatesSets = null;
+            this.serviceIdsByDateCache = null;
+            this.tripsByServiceIdCache = null;
+            if (this.logger) this.logger(`Loaded compiled snapshot ${p}`);
+            return true;
+        } catch (e) {
+            if (this.logger) this.logger(`Compiled snapshot invalid, fallback to parse: ${e instanceof Error ? e.message : String(e)}`);
+            try { fs.unlinkSync(p); } catch {}
+            return false;
+        }
+    }
+
+    private saveCompiledSnapshotByKey(key: string): void {
+        if (!this.cache) return;
+        const p = this.compiledSnapshotPath(key);
+        try {
+            this.addonInstance.saveCompiledSnapshot(p);
+            if (this.logger) this.logger(`Saved compiled snapshot ${p}`);
+        } catch (e) {
+            if (this.logger) this.logger(`Failed to save compiled snapshot: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+
     async loadStatic(feeds: GTFSFeedConfig[] | GTFSFeedConfig): Promise<GTFSStaticLoadResult[]> {
         const feedList = Array.isArray(feeds) ? feeds : [feeds];
 		if (feedList.length === 0) throw new Error('At least one GTFS feed is required');
 		if (feedList.some((feed) => !feed.id?.trim())) throw new Error('GTFS feed IDs must be non-empty');
 		if (new Set(feedList.map((feed) => feed.id)).size !== feedList.length) throw new Error('GTFS feed IDs must be unique');
-		this.clearStatic();
+		// Do not destroy current snapshot before replacement is validated; clear JS caches only
+		// this.clearStatic() removed for immutable snapshot semantics
 		const buffers: Buffer[] = [];
 		const results: GTFSStaticLoadResult[] = [];
 		const pendingCacheWrites: { cacheDir: string; cachePath: string; buffer: Buffer }[] = [];
@@ -382,7 +440,22 @@ export class GTFS {
         }
 
         const feedIds = feedList.map((feed) => feed.id);
-		await this.loadFromBuffers(buffers, feedIds);
+        // Compute effective files for snapshot key (same logic as loadFromBuffers)
+        const ALL_FILES_SNAP = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','transfers.txt','shapes.txt','feed_info.txt','occupancies.txt'];
+        let effectiveForKey: string[] = this.filesToLoad ? [...this.filesToLoad] : [];
+        if (this.skipStopTimes && effectiveForKey.length === 0) {
+            effectiveForKey = ALL_FILES_SNAP.filter(f => f !== 'stop_times.txt');
+        } else if (this.skipStopTimes) {
+            effectiveForKey = effectiveForKey.filter(f => f !== 'stop_times.txt');
+        }
+        const key = this.computeSnapshotKey(buffers, feedIds, effectiveForKey);
+        // Compiled warm path disabled for now (inefficient for large feeds); fallback to normal parse
+        // let usedCompiled = false;
+        // if (this.cache) usedCompiled = this.tryLoadCompiledSnapshot(key);
+        // if (!usedCompiled) {
+            await this.loadFromBuffers(buffers, feedIds);
+        //    if (this.cache) this.saveCompiledSnapshotByKey(key);
+        // }
 		// Only replace durable caches after every downloaded ZIP parsed successfully.
 		for (const { cacheDir, cachePath, buffer } of pendingCacheWrites) {
 			if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
@@ -427,6 +500,13 @@ export class GTFS {
             effectiveFiles = effectiveFiles.filter(f => f !== 'stop_times.txt');
         }
 
+        const ALL_FILES_KEY = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','transfers.txt','shapes.txt','feed_info.txt','occupancies.txt'];
+        let effectiveForCacheKey = effectiveFiles.length ? [...effectiveFiles] : [];
+        // effectiveFiles may be empty meaning all; normalize for key
+        if (effectiveForCacheKey.length === 0) effectiveForCacheKey = [];
+        const keyForBuffer = this.computeSnapshotKey(buffers, feedIds, effectiveForCacheKey.length ? effectiveForCacheKey : ALL_FILES_KEY);
+        // Try compiled warm path if cache enabled and caller is loadFromBuffers directly (e.g., tests)
+        // We do not automatically try here to avoid double path; loadStatic already tried
         return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge, feedIds, effectiveFiles)
             .then((result: void) => {
                 this.serviceDatesCache = null;
@@ -436,6 +516,15 @@ export class GTFS {
                 return result;
             });
     }
+
+    getSnapshotRevision(): { realtime_revision: number; stop_time_count: number; trip_count: number } {
+        return this.addonInstance.getSnapshotRevision();
+    }
+    getStaticSnapshotInfo(): { stop_time_count: number; realtime_revision: number } {
+        return this.addonInstance.getStaticSnapshotInfo();
+    }
+    saveCompiledSnapshot(path: string): void { return this.addonInstance.saveCompiledSnapshot(path); }
+    loadCompiledSnapshot(path: string): void { return this.addonInstance.loadCompiledSnapshot(path); }
 
     getRoutes(filter?: Partial<Route>): Route[] {
         return this.addonInstance.getRoutes(filter);
@@ -453,7 +542,7 @@ export class GTFS {
         return this.addonInstance.getStopTimes(query || {});
     }
 
-    getStopTimesPacked(query: Pick<StopTimeQuery, "trip_id" | "trip_ids" | "feed_id">): PackedStopTimes {
+    getStopTimesPacked(query: Pick<StopTimeQuery, "trip_id" | "trip_ids" | "feed_id"> & { fields?: string[] }): PackedStopTimes {
         return this.addonInstance.getStopTimesPacked(query);
     }
 
@@ -630,25 +719,39 @@ export class GTFS {
 		targetFeedId: string;
 		sourceId: string;
 	}): GTFSRealtimeUpdateResult {
-		return this.addonInstance.updateRealtime(
+		const result = this.addonInstance.updateRealtime(
 			input.kind === "alerts" ? input.data : [],
 			input.kind === "trip-updates" ? input.data : [],
             input.kind === "vehicles" ? input.data : [],
             input.targetFeedId,
             input.sourceId,
-        );
+        ) as GTFSRealtimeUpdateResult;
+		this.lastChangedTripIds = result.changed_trip_ids ?? [];
+		this.lastRealtimeRevision = result.realtime_revision ?? 0;
+		return result;
     }
 
+	getLastChangedTripIds(): RealtimeChangedTrip[] { return [...this.lastChangedTripIds]; }
+	getRealtimeRevision(): number { return this.lastRealtimeRevision; }
+
     async updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[]): Promise<GTFSRealtimeLoadResult[]> {
-		return Promise.all(sources.map(async (source) => {
+		const allChanged: RealtimeChangedTrip[] = [];
+		let lastRevision = this.lastRealtimeRevision;
+		const results = await Promise.all(sources.map(async (source) => {
 			try {
 				const data = await this.download(source.url, `Downloading ${source.kind}`, false, source.headers);
 				const refresh = this.updateRealtime({ kind: source.kind, data, targetFeedId: source.targetFeedId, sourceId: source.id });
+				if (refresh?.changed_trip_ids) allChanged.push(...refresh.changed_trip_ids);
+				if (refresh?.realtime_revision) lastRevision = refresh.realtime_revision;
 				return { id: source.id, ok: true, refresh };
 			} catch (error) {
 				return { id: source.id, ok: false, error: error instanceof Error ? error.message : String(error) };
 			}
 		}));
+		// Aggregate for sparse update consumers
+		this.lastChangedTripIds = allChanged;
+		this.lastRealtimeRevision = lastRevision;
+		return results;
     }
 
     getRealtimeTripUpdates(filter?: RealtimeFilter): RealtimeTripUpdate[] {

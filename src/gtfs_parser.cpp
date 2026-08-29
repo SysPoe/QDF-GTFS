@@ -1148,9 +1148,8 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
         memset(&zip_archive, 0, sizeof(zip_archive));
 
         if (!mz_zip_reader_init_mem(&zip_archive, zip_data.data, zip_data.size, 0)) {
-            if (log) log("Failed to init zip reader for feed " + std::to_string(feed_idx));
-            std::cerr << "Failed to init zip reader" << std::endl;
-            continue;
+            if (log) log("Failed to init zip reader for feed " + current_feed_id);
+            throw std::runtime_error("Failed to init zip reader for feed " + current_feed_id + " (invalid or truncated archive)");
         }
 
         int64_t total_uncompressed_size = 0;

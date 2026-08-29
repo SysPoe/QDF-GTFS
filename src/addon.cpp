@@ -3,6 +3,10 @@
 #include "GTFS.h"
 #include "gtfs_parser.cpp"
 #include "gtfs_realtime.cpp"
+#include <memory>
+#include <filesystem>
+#include <shared_mutex>
+#include <atomic>
 #include <ctime>
 #include <string_view>
 #include <vector>
@@ -104,10 +108,12 @@ struct Logger {
     bool ansi;
 };
 
+class GTFSAddon;
+
 class GTFSWorker : public Napi::AsyncWorker {
 public:
-    GTFSWorker(Napi::Env env, std::vector<gtfs::BufferView>&& zipBuffers, std::vector<Napi::Reference<Napi::Buffer<unsigned char>>>&& bufferRefs, std::vector<std::string>&& feedIds, int mergeStrategy, gtfs::GTFSData* targetData, Logger logger, std::vector<std::string>&& filesToLoad)
-        : Napi::AsyncWorker(env, "GTFSWorker"), deferred(Napi::Promise::Deferred::New(env)), zipBuffers(std::move(zipBuffers)), bufferRefs(std::move(bufferRefs)), feedIds(std::move(feedIds)), mergeStrategy(mergeStrategy), targetData(targetData), logger(logger), filesToLoad(std::move(filesToLoad)) {}
+    GTFSWorker(Napi::Env env, std::vector<gtfs::BufferView>&& zipBuffers, std::vector<Napi::Reference<Napi::Buffer<unsigned char>>>&& bufferRefs, std::vector<std::string>&& feedIds, int mergeStrategy, std::shared_ptr<gtfs::GTFSData> newSnapshot, GTFSAddon* owner, Logger logger, std::vector<std::string>&& filesToLoad, std::shared_ptr<gtfs::GTFSData> previousSnapshot)
+        : Napi::AsyncWorker(env, "GTFSWorker"), deferred(Napi::Promise::Deferred::New(env)), zipBuffers(std::move(zipBuffers)), bufferRefs(std::move(bufferRefs)), feedIds(std::move(feedIds)), mergeStrategy(mergeStrategy), newSnapshot(std::move(newSnapshot)), owner(owner), logger(logger), filesToLoad(std::move(filesToLoad)), previousSnapshot(std::move(previousSnapshot)) {}
 
     ~GTFSWorker() {
         if (logger.tsfn) {
@@ -151,18 +157,30 @@ public:
                 logger.progress_tsfn.NonBlockingCall(callback);
             };
 
-            gtfs::load_feeds(*targetData, zipBuffers, feedIds, mergeStrategy, logCallback, progressCallback, filesToLoad);
+            gtfs::load_feeds(*newSnapshot, zipBuffers, feedIds, mergeStrategy, logCallback, progressCallback, filesToLoad);
+            // Validate immutable invariants before publishing; throw on failure to keep previous snapshot alive.
+            std::string validationError;
+            if (!newSnapshot->validate(validationError)) {
+                throw std::runtime_error(validationError);
+            }
+            // Preserve realtime from previous snapshot so a static refresh does not drop realtime overlay.
+            if (previousSnapshot) {
+                newSnapshot->realtime_trip_updates = previousSnapshot->realtime_trip_updates;
+                newSnapshot->realtime_vehicle_positions = previousSnapshot->realtime_vehicle_positions;
+                newSnapshot->realtime_alerts = previousSnapshot->realtime_alerts;
+                newSnapshot->realtime_revision = previousSnapshot->realtime_revision;
+                newSnapshot->realtime_trip_updates_by_trip_id = previousSnapshot->realtime_trip_updates_by_trip_id;
+                newSnapshot->realtime_trip_updates_by_source_id = previousSnapshot->realtime_trip_updates_by_source_id;
+                newSnapshot->realtime_vehicle_positions_by_trip_id = previousSnapshot->realtime_vehicle_positions_by_trip_id;
+                newSnapshot->realtime_vehicle_positions_by_source_id = previousSnapshot->realtime_vehicle_positions_by_source_id;
+                newSnapshot->realtime_alerts_by_source_id = previousSnapshot->realtime_alerts_by_source_id;
+            }
         } catch (const std::exception& e) {
             SetError(e.what());
         }
     }
 
-    void OnOK() override {
-        ReleaseBufferRefs();
-        trimNativeAllocator();
-        deferred.Resolve(Env().Null());
-    }
-
+    void OnOK() override;
     void OnError(const Napi::Error& e) override {
         ReleaseBufferRefs();
         deferred.Reject(e.Value());
@@ -176,9 +194,11 @@ private:
     std::vector<Napi::Reference<Napi::Buffer<unsigned char>>> bufferRefs;
     std::vector<std::string> feedIds;
     int mergeStrategy;
-    gtfs::GTFSData* targetData;
+    std::shared_ptr<gtfs::GTFSData> newSnapshot;
+    GTFSAddon* owner;
     Logger logger;
     std::vector<std::string> filesToLoad;
+    std::shared_ptr<gtfs::GTFSData> previousSnapshot;
 
     void ReleaseBufferRefs() {
         if (bufferRefs.empty()) return;
@@ -195,9 +215,38 @@ public:
     static Napi::Object Init(Napi::Env env, Napi::Object exports);
     GTFSAddon(const Napi::CallbackInfo& info);
 
-    gtfs::GTFSData data; 
+    std::shared_ptr<gtfs::GTFSData> getSnapshot() {
+        std::shared_lock<std::shared_mutex> lock(snapshotMutex);
+        if (!snapshot) {
+            // Lazily create empty snapshot if none exists (e.g., before first load)
+            // Use unique_lock to initialize without deadlock; upgrade via separate block
+            lock.unlock();
+            std::unique_lock<std::shared_mutex> wlock(snapshotMutex);
+            if (!snapshot) snapshot = std::make_shared<gtfs::GTFSData>();
+            return snapshot;
+        }
+        return snapshot;
+    }
+
+    std::shared_ptr<gtfs::GTFSData> getSnapshotShared() const {
+        std::shared_lock<std::shared_mutex> lock(snapshotMutex);
+        return snapshot;
+    }
+
+    void publishSnapshot(std::shared_ptr<gtfs::GTFSData> newSnapshot) {
+        std::unique_lock<std::shared_mutex> lock(snapshotMutex);
+        snapshot = std::move(newSnapshot);
+    }
+
+    void clearSnapshot() {
+        std::unique_lock<std::shared_mutex> lock(snapshotMutex);
+        snapshot = std::make_shared<gtfs::GTFSData>();
+    }
 
 private:
+    std::shared_ptr<gtfs::GTFSData> snapshot;
+    mutable std::shared_mutex snapshotMutex;
+
     Napi::Value LoadFromBuffers(const Napi::CallbackInfo& info);
     Napi::Value GetRoutes(const Napi::CallbackInfo& info);
     Napi::Value GetAgencies(const Napi::CallbackInfo& info);
@@ -220,6 +269,10 @@ private:
     Napi::Value ClearStatic(const Napi::CallbackInfo& info);
     Napi::Value MergeStops(const Napi::CallbackInfo& info);
     Napi::Value UpdateStop(const Napi::CallbackInfo& info);
+    Napi::Value GetSnapshotRevision(const Napi::CallbackInfo& info);
+    Napi::Value GetStaticSnapshotInfo(const Napi::CallbackInfo& info);
+    Napi::Value SaveCompiledSnapshot(const Napi::CallbackInfo& info);
+    Napi::Value LoadCompiledSnapshot(const Napi::CallbackInfo& info);
 
 
 
@@ -227,6 +280,7 @@ private:
     bool IsServiceActive(const std::string& service_id, const std::string& date_str);
     int GetDayOfWeek(const std::string& date_str);
     std::string GetPreviousDate(const std::string& date_str);
+    friend class GTFSWorker;
 };
 
 
@@ -346,7 +400,11 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("clearRealtime", &GTFSAddon::ClearRealtime),
         InstanceMethod("clearStatic", &GTFSAddon::ClearStatic),
         InstanceMethod("mergeStops", &GTFSAddon::MergeStops),
-        InstanceMethod("updateStop", &GTFSAddon::UpdateStop)
+        InstanceMethod("updateStop", &GTFSAddon::UpdateStop),
+        InstanceMethod("getSnapshotRevision", &GTFSAddon::GetSnapshotRevision),
+        InstanceMethod("getStaticSnapshotInfo", &GTFSAddon::GetStaticSnapshotInfo),
+        InstanceMethod("saveCompiledSnapshot", &GTFSAddon::SaveCompiledSnapshot),
+        InstanceMethod("loadCompiledSnapshot", &GTFSAddon::LoadCompiledSnapshot)
     });
 
 
@@ -359,6 +417,7 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
 }
 
 GTFSAddon::GTFSAddon(const Napi::CallbackInfo& info) : Napi::ObjectWrap<GTFSAddon>(info) {
+    snapshot = std::make_shared<gtfs::GTFSData>();
 }
 
 Napi::Value GTFSAddon::LoadFromBuffers(const Napi::CallbackInfo& info) {
@@ -415,13 +474,23 @@ Napi::Value GTFSAddon::LoadFromBuffers(const Napi::CallbackInfo& info) {
         }
     }
 
-    auto worker = new GTFSWorker(env, std::move(zipBuffers), std::move(bufferRefs), std::move(feedIds), mergeStrategy, &data, logger, std::move(filesToLoad));
+    auto newSnapshot = std::make_shared<gtfs::GTFSData>();
+    auto previousSnapshot = getSnapshot();
+    auto worker = new GTFSWorker(env, std::move(zipBuffers), std::move(bufferRefs), std::move(feedIds), mergeStrategy, newSnapshot, this, logger, std::move(filesToLoad), previousSnapshot);
     worker->Queue();
     return worker->GetPromise();
 }
 
+void GTFSWorker::OnOK() {
+    ReleaseBufferRefs();
+    trimNativeAllocator();
+    if (owner) owner->publishSnapshot(newSnapshot);
+    deferred.Resolve(Env().Null());
+}
+
 Napi::Value GTFSAddon::GetAgencies(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
 
     Napi::Object filter;
     bool has_filter = false;
@@ -479,6 +548,7 @@ Napi::Value GTFSAddon::GetAgencies(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetRoutes(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
 
     Napi::Object filter;
     bool has_filter = false;
@@ -557,6 +627,7 @@ Napi::Value GTFSAddon::GetRoutes(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::UpdateRealtime(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     if (info.Length() < 3) {
          Napi::TypeError::New(env, "Expected at least 3 arguments: alerts, tripUpdates, vehiclePositions").ThrowAsJavaScriptException();
          return env.Null();
@@ -673,7 +744,7 @@ Napi::Value GTFSAddon::UpdateRealtime(const Napi::CallbackInfo& info) {
 }
 
 Napi::Value GTFSAddon::ClearStatic(const Napi::CallbackInfo& info) {
-    data.releaseStaticStorage();
+    clearSnapshot();
     v8::Isolate::GetCurrent()->LowMemoryNotification();
     trimNativeAllocator();
     return info.Env().Undefined();
@@ -681,6 +752,7 @@ Napi::Value GTFSAddon::ClearStatic(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::ClearRealtime(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     std::string feed_id = "";
     if (info.Length() > 0 && info[0].IsString()) {
         feed_id = info[0].As<Napi::String>().Utf8Value();
@@ -728,6 +800,7 @@ Napi::Value GTFSAddon::ClearRealtime(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     
     Napi::Object filter;
     bool has_filter = false;
@@ -850,6 +923,7 @@ Napi::Value GTFSAddon::GetRealtimeTripUpdates(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
 
     Napi::Object filter;
     bool has_filter = false;
@@ -980,6 +1054,7 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
 
 Napi::Value GTFSAddon::GetRealtimeAlerts(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
 
     Napi::Object filter;
     bool has_filter = false;
@@ -1027,6 +1102,7 @@ Napi::Value GTFSAddon::GetRealtimeAlerts(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetStops(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
 
     Napi::Object filter;
     bool has_filter = false;
@@ -1111,6 +1187,7 @@ Napi::Value GTFSAddon::GetStops(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     if (info.Length() < 1 || !info[0].IsObject()) {
         Napi::TypeError::New(env, "Configuration object expected").ThrowAsJavaScriptException();
         return env.Null();
@@ -1336,6 +1413,7 @@ Napi::Value GTFSAddon::GetStopTimes(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetStopTimesPacked(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     if (info.Length() < 1 || !info[0].IsObject()) {
         Napi::TypeError::New(env, "Configuration object expected").ThrowAsJavaScriptException();
         return env.Null();
@@ -1370,6 +1448,35 @@ Napi::Value GTFSAddon::GetStopTimesPacked(const Napi::CallbackInfo& info) {
     const bool has_feed_id = config.Has("feed_id") && config.Get("feed_id").IsString();
     if (has_feed_id) feed_id = data.string_pool.get_id(config.Get("feed_id").As<Napi::String>().Utf8Value());
 
+    // Field selection: if caller provides `fields` array, only those columns are allocated/transferred.
+    std::unordered_set<std::string> requested;
+    bool selective = false;
+    if (config.Has("fields") && config.Get("fields").IsArray()) {
+        selective = true;
+        Napi::Array fields = config.Get("fields").As<Napi::Array>();
+        for (uint32_t i=0;i<fields.Length();++i) {
+            Napi::Value v = fields.Get(i);
+            if (v.IsString()) requested.insert(v.As<Napi::String>().Utf8Value());
+        }
+    }
+    auto need = [&](const char* name) -> bool {
+        if (!selective) return true;
+        return requested.find(name) != requested.end();
+    };
+    bool needTripIds = need("trip_id") || need("tripIds");
+    bool needStopIds = need("stop_id") || need("stopIds");
+    bool needArrival = need("arrival_time") || need("arrivalTimes");
+    bool needDeparture = need("departure_time") || need("departureTimes");
+    bool needSeq = need("stop_sequence") || need("stopSequences");
+    bool needHeadsign = need("stop_headsign") || need("stopHeadsigns");
+    bool needPickup = need("pickup_type") || need("pickupTypes");
+    bool needDrop = need("drop_off_type") || need("dropOffTypes");
+    bool needShape = need("shape_dist_traveled") || need("shapeDistances");
+    bool needTimepoint = need("timepoint") || need("timepoints");
+    bool needContPick = need("continuous_pickup") || need("continuousPickups");
+    bool needContDrop = need("continuous_drop_off") || need("continuousDropOffs");
+    bool needFeed = need("feed_id") || need("feedIds");
+
     std::vector<const gtfs::StopTime*> rows;
     for (const uint32_t trip_id : trip_ids) {
         const auto trip_it = data.stop_times_by_trip_id.find(trip_id);
@@ -1383,19 +1490,19 @@ Napi::Value GTFSAddon::GetStopTimesPacked(const Napi::CallbackInfo& info) {
     }
 
     const size_t count = rows.size();
-    Napi::Uint32Array trip_ids_out = Napi::Uint32Array::New(env, count);
-    Napi::Uint32Array stop_ids_out = Napi::Uint32Array::New(env, count);
-    Napi::Int32Array arrival_times = Napi::Int32Array::New(env, count);
-    Napi::Int32Array departure_times = Napi::Int32Array::New(env, count);
-    Napi::Int32Array stop_sequences = Napi::Int32Array::New(env, count);
-    Napi::Uint32Array stop_headsigns = Napi::Uint32Array::New(env, count);
-    Napi::Uint8Array pickup_types = Napi::Uint8Array::New(env, count);
-    Napi::Uint8Array drop_off_types = Napi::Uint8Array::New(env, count);
-    Napi::Float64Array shape_distances = Napi::Float64Array::New(env, count);
-    Napi::Int8Array timepoints = Napi::Int8Array::New(env, count);
-    Napi::Int8Array continuous_pickups = Napi::Int8Array::New(env, count);
-    Napi::Int8Array continuous_drop_offs = Napi::Int8Array::New(env, count);
-    Napi::Uint32Array feed_ids_out = Napi::Uint32Array::New(env, count);
+    Napi::Uint32Array trip_ids_out = needTripIds ? Napi::Uint32Array::New(env, count) : Napi::Uint32Array::New(env, 0);
+    Napi::Uint32Array stop_ids_out = needStopIds ? Napi::Uint32Array::New(env, count) : Napi::Uint32Array::New(env, 0);
+    Napi::Int32Array arrival_times = needArrival ? Napi::Int32Array::New(env, count) : Napi::Int32Array::New(env, 0);
+    Napi::Int32Array departure_times = needDeparture ? Napi::Int32Array::New(env, count) : Napi::Int32Array::New(env, 0);
+    Napi::Int32Array stop_sequences = needSeq ? Napi::Int32Array::New(env, count) : Napi::Int32Array::New(env, 0);
+    Napi::Uint32Array stop_headsigns = needHeadsign ? Napi::Uint32Array::New(env, count) : Napi::Uint32Array::New(env, 0);
+    Napi::Uint8Array pickup_types = needPickup ? Napi::Uint8Array::New(env, count) : Napi::Uint8Array::New(env, 0);
+    Napi::Uint8Array drop_off_types = needDrop ? Napi::Uint8Array::New(env, count) : Napi::Uint8Array::New(env, 0);
+    Napi::Float64Array shape_distances = needShape ? Napi::Float64Array::New(env, count) : Napi::Float64Array::New(env, 0);
+    Napi::Int8Array timepoints = needTimepoint ? Napi::Int8Array::New(env, count) : Napi::Int8Array::New(env, 0);
+    Napi::Int8Array continuous_pickups = needContPick ? Napi::Int8Array::New(env, count) : Napi::Int8Array::New(env, 0);
+    Napi::Int8Array continuous_drop_offs = needContDrop ? Napi::Int8Array::New(env, count) : Napi::Int8Array::New(env, 0);
+    Napi::Uint32Array feed_ids_out = needFeed ? Napi::Uint32Array::New(env, count) : Napi::Uint32Array::New(env, 0);
 
     std::unordered_map<uint32_t, uint32_t> local_string_ids;
     std::vector<uint32_t> strings;
@@ -1412,21 +1519,21 @@ Napi::Value GTFSAddon::GetStopTimesPacked(const Napi::CallbackInfo& info) {
 
     for (size_t index = 0; index < count; ++index) {
         const auto& row = *rows[index];
-        trip_ids_out[index] = local_string_id(row.trip_id);
-        stop_ids_out[index] = local_string_id(row.stop_id);
-        arrival_times[index] = row.arrival_time;
-        departure_times[index] = row.departure_time;
-        stop_sequences[index] = row.stop_sequence;
-        stop_headsigns[index] = local_string_id(row.stop_headsign);
-        pickup_types[index] = static_cast<uint8_t>(row.pickup_type);
-        drop_off_types[index] = static_cast<uint8_t>(row.drop_off_type);
-        shape_distances[index] = row.shape_dist_traveled == gtfs::ST_NO_DIST
+        if (needTripIds) trip_ids_out[index] = local_string_id(row.trip_id);
+        if (needStopIds) stop_ids_out[index] = local_string_id(row.stop_id);
+        if (needArrival) arrival_times[index] = row.arrival_time;
+        if (needDeparture) departure_times[index] = row.departure_time;
+        if (needSeq) stop_sequences[index] = row.stop_sequence;
+        if (needHeadsign) stop_headsigns[index] = local_string_id(row.stop_headsign);
+        if (needPickup) pickup_types[index] = static_cast<uint8_t>(row.pickup_type);
+        if (needDrop) drop_off_types[index] = static_cast<uint8_t>(row.drop_off_type);
+        if (needShape) shape_distances[index] = row.shape_dist_traveled == gtfs::ST_NO_DIST
             ? std::numeric_limits<double>::quiet_NaN()
             : row.shape_dist_traveled;
-        timepoints[index] = row.timepoint;
-        continuous_pickups[index] = row.continuous_pickup;
-        continuous_drop_offs[index] = row.continuous_drop_off;
-        feed_ids_out[index] = local_string_id(row.feed_id);
+        if (needTimepoint) timepoints[index] = row.timepoint;
+        if (needContPick) continuous_pickups[index] = row.continuous_pickup;
+        if (needContDrop) continuous_drop_offs[index] = row.continuous_drop_off;
+        if (needFeed) feed_ids_out[index] = local_string_id(row.feed_id);
     }
 
     Napi::Array strings_out = Napi::Array::New(env, strings.size());
@@ -1454,6 +1561,7 @@ Napi::Value GTFSAddon::GetStopTimesPacked(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetTripStopTimeBounds(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     Napi::Array result = Napi::Array::New(env);
     uint32_t result_index = 0;
 
@@ -1507,6 +1615,7 @@ Napi::Value GTFSAddon::GetTripStopTimeBounds(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetStaticOccupancies(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     if (info.Length() < 1 || !info[0].IsObject()) {
         Napi::TypeError::New(env, "Static occupancy query expected").ThrowAsJavaScriptException();
         return env.Null();
@@ -1570,6 +1679,7 @@ Napi::Value GTFSAddon::GetStaticOccupancies(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetFeedInfo(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     
     Napi::Object filter;
     bool has_filter = false;
@@ -1607,6 +1717,7 @@ Napi::Value GTFSAddon::GetFeedInfo(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
 
     Napi::Object filter;
     bool has_filter = false;
@@ -1747,6 +1858,7 @@ Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetTransfers(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     Napi::Object filter;
     bool has_filter = false;
     if (info.Length() > 0 && info[0].IsObject()) {
@@ -1796,6 +1908,7 @@ Napi::Value GTFSAddon::GetTransfers(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetShapes(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
 
     Napi::Object filter;
     bool has_filter = false;
@@ -1849,6 +1962,7 @@ Napi::Value GTFSAddon::GetShapes(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetCalendars(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
 
     Napi::Object filter;
     bool has_filter = false;
@@ -1909,6 +2023,7 @@ Napi::Value GTFSAddon::GetCalendars(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::GetCalendarDates(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     std::vector<gtfs::CalendarDate> flat_list;
 
     Napi::Object filter;
@@ -1955,6 +2070,7 @@ Napi::Value GTFSAddon::GetCalendarDates(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::MergeStops(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     if (info.Length() < 3 || !info[0].IsString() || !info[1].IsArray() || !info[2].IsString()) {
         Napi::TypeError::New(env, "Expected targetStopId, sourceStopIds, and feedId").ThrowAsJavaScriptException();
         return env.Null();
@@ -2033,6 +2149,7 @@ Napi::Value GTFSAddon::MergeStops(const Napi::CallbackInfo& info) {
 
 Napi::Value GTFSAddon::UpdateStop(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
     if (info.Length() < 2 || !info[0].IsString() || !info[1].IsObject()) {
         Napi::TypeError::New(env, "Expected stop_id (string) and partialStop (object)").ThrowAsJavaScriptException();
         return env.Null();
@@ -2125,6 +2242,81 @@ Napi::Value GTFSAddon::UpdateStop(const Napi::CallbackInfo& info) {
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
     return GTFSAddon::Init(env, exports);
+}
+
+
+Napi::Value GTFSAddon::GetSnapshotRevision(const Napi::CallbackInfo& info) {
+    auto snapshot = getSnapshot();
+    Napi::Env env = info.Env();
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("realtime_revision", static_cast<double>(snapshot->realtime_revision));
+    result.Set("stop_time_count", static_cast<double>(snapshot->stop_times.size()));
+    result.Set("trip_count", static_cast<double>(snapshot->trips.size()));
+    return result;
+}
+
+Napi::Value GTFSAddon::GetStaticSnapshotInfo(const Napi::CallbackInfo& info) {
+    auto snapshot = getSnapshot();
+    Napi::Env env = info.Env();
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("stop_time_count", static_cast<double>(snapshot->stop_times.size()));
+    // Use string_pool size as proxy for snapshot identity
+    result.Set("realtime_revision", static_cast<double>(snapshot->realtime_revision));
+    return result;
+}
+
+
+Napi::Value GTFSAddon::SaveCompiledSnapshot(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "path string expected").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    std::string path = info[0].As<Napi::String>().Utf8Value();
+    auto snapshot = getSnapshot();
+    std::string error;
+    bool ok = snapshot->saveCompiledSnapshot(path, error);
+    if (!ok) {
+        Napi::Error::New(env, error).ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    return env.Undefined();
+}
+
+Napi::Value GTFSAddon::LoadCompiledSnapshot(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "path string expected").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    std::string path = info[0].As<Napi::String>().Utf8Value();
+    auto newSnapshot = std::make_shared<gtfs::GTFSData>();
+    std::string error;
+    bool ok = newSnapshot->loadCompiledSnapshot(path, error);
+    if (!ok) {
+        Napi::Error::New(env, error).ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    // Preserve realtime from current snapshot if any (warm load should keep current realtime revision zero initially)
+    auto cur = getSnapshot();
+    if (cur) {
+        newSnapshot->realtime_trip_updates = cur->realtime_trip_updates;
+        newSnapshot->realtime_vehicle_positions = cur->realtime_vehicle_positions;
+        newSnapshot->realtime_alerts = cur->realtime_alerts;
+        newSnapshot->realtime_revision = cur->realtime_revision;
+        newSnapshot->realtime_trip_updates_by_trip_id = cur->realtime_trip_updates_by_trip_id;
+        newSnapshot->realtime_trip_updates_by_source_id = cur->realtime_trip_updates_by_source_id;
+        newSnapshot->realtime_vehicle_positions_by_trip_id = cur->realtime_vehicle_positions_by_trip_id;
+        newSnapshot->realtime_vehicle_positions_by_source_id = cur->realtime_vehicle_positions_by_source_id;
+        newSnapshot->realtime_alerts_by_source_id = cur->realtime_alerts_by_source_id;
+    }
+    std::string verr;
+    if (!newSnapshot->validate(verr)) {
+        Napi::Error::New(env, std::string("snapshot validation failed: ") + verr).ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    publishSnapshot(newSnapshot);
+    return env.Undefined();
 }
 
 NODE_API_MODULE(gtfs_addon, Init)

@@ -60,6 +60,19 @@ public:
 		id_to_str.shrink_to_fit();
 	}
 
+    std::vector<std::string> snapshotStrings() const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        return id_to_str;
+    }
+
+    void restoreStrings(const std::vector<std::string>& vec) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        id_to_str = vec;
+        str_to_id.clear();
+        str_to_id.reserve(vec.size()*2);
+        for (uint32_t i=0;i<vec.size();++i) str_to_id.emplace(vec[i], i);
+    }
+
     // Heterogeneous intern: avoids allocation if already interned
     uint32_t intern(std::string_view sv) {
         {
@@ -588,6 +601,96 @@ public:
 		realtime_alerts_by_source_id.rehash(0);
 		string_pool.release();
 	}
+
+	bool validate(std::string& error) const {
+		// Check stop-time index integrity
+		if (stop_time_indices_by_stop_id.size() != stop_times.size()) {
+			if (!stop_times.empty()) {
+				error = "stop-time index size mismatch";
+				return false;
+			}
+		}
+		for (const auto& [stop_id, range] : stop_times_by_stop_id) {
+			if (static_cast<uint64_t>(range.begin) + range.count > stop_time_indices_by_stop_id.size()) {
+				error = "stop-time by-stop range out of bounds";
+				return false;
+			}
+			for (uint32_t offset = 0; offset < range.count; ++offset) {
+				uint32_t idx = stop_time_indices_by_stop_id[range.begin + offset];
+				if (idx >= stop_times.size()) {
+					error = "stop-time index out of bounds";
+					return false;
+				}
+				if (stop_times[idx].stop_id != stop_id) {
+					error = "stop-time by-stop index corruption";
+					return false;
+				}
+			}
+		}
+		// Trip stop-time ranges must be within bounds and sorted
+		size_t total_indexed = 0;
+		for (const auto& [trip_id, ranges] : stop_times_by_trip_id) {
+			for (const auto& range : ranges) {
+				if (static_cast<uint64_t>(range.begin) + range.count > stop_times.size()) {
+					error = "trip stop-time range out of bounds";
+					return false;
+				}
+				total_indexed += range.count;
+				for (uint32_t offset = 1; offset < range.count; ++offset) {
+					if (stop_times[range.begin + offset].stop_sequence < stop_times[range.begin + offset - 1].stop_sequence) {
+						error = "stop-times not sorted by sequence";
+						return false;
+					}
+				}
+			}
+		}
+		if (!stop_times.empty() && total_indexed != stop_times.size()) {
+			error = "stop-time trip index count mismatch";
+			return false;
+		}
+		// Trip indexes must reference existing trips
+		for (const auto& [feed_id, by_route] : trips_by_route_id) {
+			for (const auto& [route_id, vec] : by_route) {
+				for (const Trip* trip : vec) {
+					if (!trip) {
+						error = "null trip in route index";
+						return false;
+					}
+					auto feed_it = trips.find(feed_id);
+					if (feed_it == trips.end() || feed_it->second.find(trip->trip_id) == feed_it->second.end()) {
+						error = "route index references missing trip";
+						return false;
+					}
+				}
+			}
+		}
+		for (const auto& [feed_id, by_service] : trips_by_service_id) {
+			for (const auto& [service_id, vec] : by_service) {
+				for (const Trip* trip : vec) {
+					if (!trip) {
+						error = "null trip in service index";
+						return false;
+					}
+				}
+			}
+		}
+		// Shape ranges must be within bounds
+		for (const auto& [shape_id, ranges] : shape_ranges_by_id) {
+			for (const auto& [begin, end] : ranges) {
+				if (end > shapes.size() || begin > end) {
+					error = "shape range out of bounds";
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+    // Compiled snapshot persistence (versioned, bounds-checked, atomic)
+    bool saveCompiledSnapshot(const std::string& path, std::string& error) const;
+    bool loadCompiledSnapshot(const std::string& path, std::string& error);
+    static uint32_t snapshotVersion() { return 2; }
+    static uint32_t snapshotArchHash();
 };
 
 }

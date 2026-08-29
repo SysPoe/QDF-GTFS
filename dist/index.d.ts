@@ -1,4 +1,4 @@
-import { Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes } from './types.js';
+import { Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes, RealtimeChangedTrip } from './types.js';
 export * from './types.js';
 /**
  * Decode carriage details from a standalone vehicle feed.
@@ -27,17 +27,36 @@ export declare class GTFS {
     private serviceDatesSets;
     private serviceIdsByDateCache;
     private tripsByServiceIdCache;
+    private lastChangedTripIds;
+    private lastRealtimeRevision;
     actions: GTFSActions;
     constructor(options?: GTFSOptions);
     private showProgress;
+    private computeSnapshotKey;
+    private compiledSnapshotPath;
+    private tryLoadCompiledSnapshot;
+    private saveCompiledSnapshotByKey;
     loadStatic(feeds: GTFSFeedConfig[] | GTFSFeedConfig): Promise<GTFSStaticLoadResult[]>;
     loadFromPath(paths: string[], feedIds: string[]): Promise<void>;
     loadFromBuffers(buffers: Buffer[], feedIds: string[]): Promise<void>;
+    getSnapshotRevision(): {
+        realtime_revision: number;
+        stop_time_count: number;
+        trip_count: number;
+    };
+    getStaticSnapshotInfo(): {
+        stop_time_count: number;
+        realtime_revision: number;
+    };
+    saveCompiledSnapshot(path: string): void;
+    loadCompiledSnapshot(path: string): void;
     getRoutes(filter?: Partial<Route>): Route[];
     getAgencies(filter?: Partial<Agency>): Agency[];
     getStops(filter?: Partial<Stop>): Stop[];
     getStopTimes(query?: StopTimeQuery): StopTime[];
-    getStopTimesPacked(query: Pick<StopTimeQuery, "trip_id" | "trip_ids" | "feed_id">): PackedStopTimes;
+    getStopTimesPacked(query: Pick<StopTimeQuery, "trip_id" | "trip_ids" | "feed_id"> & {
+        fields?: string[];
+    }): PackedStopTimes;
     getTripStopTimeBounds(): TripStopTimeBounds[];
     clearStatic(): void;
     getStaticOccupancies(query: StaticOccupancyQuery): StaticOccupancy[];
@@ -59,6 +78,8 @@ export declare class GTFS {
         targetFeedId: string;
         sourceId: string;
     }): GTFSRealtimeUpdateResult;
+    getLastChangedTripIds(): RealtimeChangedTrip[];
+    getRealtimeRevision(): number;
     updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[]): Promise<GTFSRealtimeLoadResult[]>;
     getRealtimeTripUpdates(filter?: RealtimeFilter): RealtimeTripUpdate[];
     getRealtimeVehiclePositions(filter?: RealtimeFilter): RealtimeVehiclePosition[];
