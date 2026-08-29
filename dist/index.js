@@ -31,6 +31,17 @@ try {
                     getAgencies() { return []; }
                     getStops() { return []; }
                     getStopTimes() { return []; }
+                    getStopTimesPacked() {
+                        return {
+                            strings: [], tripIds: new Uint32Array(), stopIds: new Uint32Array(),
+                            arrivalTimes: new Int32Array(), departureTimes: new Int32Array(),
+                            stopSequences: new Int32Array(), stopHeadsigns: new Uint32Array(),
+                            pickupTypes: new Uint8Array(), dropOffTypes: new Uint8Array(),
+                            shapeDistances: new Float64Array(), timepoints: new Int8Array(),
+                            continuousPickups: new Int8Array(), continuousDropOffs: new Int8Array(),
+                            feedIds: new Uint32Array(),
+                        };
+                    }
                     getTripStopTimeBounds() { return []; }
                     getStaticOccupancies() { return []; }
                     getTrips() { return []; }
@@ -44,6 +55,7 @@ try {
                     getRealtimeTripUpdates() { return []; }
                     getRealtimeVehiclePositions() { return []; }
                     getRealtimeAlerts() { return []; }
+                    clearStatic() { }
                 };
             }
             else {
@@ -281,6 +293,7 @@ export class GTFS {
             throw new Error('GTFS feed IDs must be non-empty');
         if (new Set(feedList.map((feed) => feed.id)).size !== feedList.length)
             throw new Error('GTFS feed IDs must be unique');
+        this.clearStatic();
         const buffers = [];
         const results = [];
         const pendingCacheWrites = [];
@@ -439,8 +452,18 @@ export class GTFS {
     getStopTimes(query) {
         return this.addonInstance.getStopTimes(query || {});
     }
+    getStopTimesPacked(query) {
+        return this.addonInstance.getStopTimesPacked(query);
+    }
     getTripStopTimeBounds() {
         return this.addonInstance.getTripStopTimeBounds();
+    }
+    clearStatic() {
+        this.addonInstance.clearStatic();
+        this.serviceDatesCache = null;
+        this.serviceDatesSets = null;
+        this.serviceIdsByDateCache = null;
+        this.tripsByServiceIdCache = null;
     }
     getStaticOccupancies(query) {
         return this.addonInstance.getStaticOccupancies(query);

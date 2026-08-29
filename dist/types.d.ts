@@ -457,6 +457,23 @@ export interface StopTimeQuery {
     dateMode?: "timestamp" | "gtfs_date";
     feed_id?: string;
 }
+/** Columnar stop-time transfer used by high-volume native consumers. */
+export interface PackedStopTimes {
+    strings: string[];
+    tripIds: Uint32Array;
+    stopIds: Uint32Array;
+    arrivalTimes: Int32Array;
+    departureTimes: Int32Array;
+    stopSequences: Int32Array;
+    stopHeadsigns: Uint32Array;
+    pickupTypes: Uint8Array;
+    dropOffTypes: Uint8Array;
+    shapeDistances: Float64Array;
+    timepoints: Int8Array;
+    continuousPickups: Int8Array;
+    continuousDropOffs: Int8Array;
+    feedIds: Uint32Array;
+}
 export interface ProgressInfo {
     task: string;
     total: number;

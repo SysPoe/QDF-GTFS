@@ -1,4 +1,4 @@
-import { Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery } from './types.js';
+import { Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes } from './types.js';
 export * from './types.js';
 /**
  * Decode carriage details from a standalone vehicle feed.
@@ -37,7 +37,9 @@ export declare class GTFS {
     getAgencies(filter?: Partial<Agency>): Agency[];
     getStops(filter?: Partial<Stop>): Stop[];
     getStopTimes(query?: StopTimeQuery): StopTime[];
+    getStopTimesPacked(query: Pick<StopTimeQuery, "trip_id" | "trip_ids" | "feed_id">): PackedStopTimes;
     getTripStopTimeBounds(): TripStopTimeBounds[];
+    clearStatic(): void;
     getStaticOccupancies(query: StaticOccupancyQuery): StaticOccupancy[];
     getFeedInfo(): FeedInfo[];
     private qualifiedKey;

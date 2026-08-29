@@ -10,7 +10,7 @@ import {
     Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
     GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId,
-    RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery
+    RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes
 } from './types.js';
 
 export * from './types.js';
@@ -38,6 +38,17 @@ try {
                     getAgencies() { return []; }
                     getStops() { return []; }
                     getStopTimes() { return []; }
+                    getStopTimesPacked() {
+                        return {
+                            strings: [], tripIds: new Uint32Array(), stopIds: new Uint32Array(),
+                            arrivalTimes: new Int32Array(), departureTimes: new Int32Array(),
+                            stopSequences: new Int32Array(), stopHeadsigns: new Uint32Array(),
+                            pickupTypes: new Uint8Array(), dropOffTypes: new Uint8Array(),
+                            shapeDistances: new Float64Array(), timepoints: new Int8Array(),
+                            continuousPickups: new Int8Array(), continuousDropOffs: new Int8Array(),
+                            feedIds: new Uint32Array(),
+                        };
+                    }
                     getTripStopTimeBounds() { return []; }
                     getStaticOccupancies() { return []; }
                     getTrips() { return []; }
@@ -51,6 +62,7 @@ try {
                     getRealtimeTripUpdates() { return []; }
                     getRealtimeVehiclePositions() { return []; }
                     getRealtimeAlerts() { return []; }
+                    clearStatic() { }
                 };
             } else {
                 throw e;
@@ -285,7 +297,8 @@ export class GTFS {
 		if (feedList.length === 0) throw new Error('At least one GTFS feed is required');
 		if (feedList.some((feed) => !feed.id?.trim())) throw new Error('GTFS feed IDs must be non-empty');
 		if (new Set(feedList.map((feed) => feed.id)).size !== feedList.length) throw new Error('GTFS feed IDs must be unique');
-        const buffers: Buffer[] = [];
+		this.clearStatic();
+		const buffers: Buffer[] = [];
 		const results: GTFSStaticLoadResult[] = [];
 		const pendingCacheWrites: { cacheDir: string; cachePath: string; buffer: Buffer }[] = [];
 		const sourceBuffers = new Map<string, { buffer: Buffer; source: GTFSStaticLoadResult["source"] }>();
@@ -440,8 +453,20 @@ export class GTFS {
         return this.addonInstance.getStopTimes(query || {});
     }
 
+    getStopTimesPacked(query: Pick<StopTimeQuery, "trip_id" | "trip_ids" | "feed_id">): PackedStopTimes {
+        return this.addonInstance.getStopTimesPacked(query);
+    }
+
     getTripStopTimeBounds(): TripStopTimeBounds[] {
         return this.addonInstance.getTripStopTimeBounds();
+    }
+
+    clearStatic(): void {
+        this.addonInstance.clearStatic();
+        this.serviceDatesCache = null;
+        this.serviceDatesSets = null;
+        this.serviceIdsByDateCache = null;
+        this.tripsByServiceIdCache = null;
     }
 
     getStaticOccupancies(query: StaticOccupancyQuery): StaticOccupancy[] {

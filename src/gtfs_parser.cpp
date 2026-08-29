@@ -416,7 +416,9 @@ size_t parse_trips(GTFSData& data, const char* content_data, size_t content_size
     int wheelchair_idx = get_col_index(headers, "wheelchair_accessible");
     int bikes_idx = get_col_index(headers, "bikes_allowed");
 
-    data.trips[feed_id].reserve(content_size / 80 + 16);
+    const uint32_t feed_id_int = data.string_pool.intern(feed_id);
+    auto& feed_trips = data.trips[feed_id_int];
+    feed_trips.reserve(content_size / 80 + 16);
 
     size_t count = 0;
     while (ptr < end) {
@@ -426,30 +428,32 @@ size_t parse_trips(GTFSData& data, const char* content_data, size_t content_size
         std::string line(line_start, line_len);
         auto row = parse_csv_line(line);
         Trip t;
-        t.feed_id = feed_id;
+        t.feed_id = feed_id_int;
         std::string tmp;
-        t.route_id = get_val(row, route_id_idx);
-        t.service_id = get_val(row, service_id_idx);
-        t.trip_id = get_val(row, trip_id_idx);
+        t.route_id = data.string_pool.intern(get_val(row, route_id_idx));
+        t.service_id = data.string_pool.intern(get_val(row, service_id_idx));
+        t.trip_id = data.string_pool.intern(get_val(row, trip_id_idx));
         tmp = get_val(row, headsign_idx);
-        if (!tmp.empty()) t.trip_headsign = tmp;
+        if (!tmp.empty()) t.trip_headsign = data.string_pool.intern(tmp);
         tmp = get_val(row, short_name_idx);
-        if (!tmp.empty()) t.trip_short_name = tmp;
+        if (!tmp.empty()) t.trip_short_name = data.string_pool.intern(tmp);
         tmp = get_val(row, direction_id_idx);
-        if (!tmp.empty()) t.direction_id = get_int(row, direction_id_idx);
+        if (!tmp.empty()) t.direction_id = static_cast<int32_t>(get_int(row, direction_id_idx));
         tmp = get_val(row, block_id_idx);
-        if (!tmp.empty()) t.block_id = tmp;
+        if (!tmp.empty()) t.block_id = data.string_pool.intern(tmp);
         tmp = get_val(row, shape_id_idx);
-        if (!tmp.empty()) t.shape_id = tmp;
+        if (!tmp.empty()) t.shape_id = data.string_pool.intern(tmp);
         tmp = get_val(row, wheelchair_idx);
-        if (!tmp.empty()) t.wheelchair_accessible = get_int(row, wheelchair_idx);
+        if (!tmp.empty()) t.wheelchair_accessible = static_cast<int32_t>(get_int(row, wheelchair_idx));
         tmp = get_val(row, bikes_idx);
-        if (!tmp.empty()) t.bikes_allowed = get_int(row, bikes_idx);
+        if (!tmp.empty()) t.bikes_allowed = static_cast<int32_t>(get_int(row, bikes_idx));
 
-        if (merge_strategy == 1 && data.trips[feed_id].count(t.trip_id)) continue;
-        if (merge_strategy == 2 && data.trips[feed_id].count(t.trip_id)) throw std::runtime_error("Duplicate trip: " + t.trip_id);
+        if (merge_strategy == 1 && feed_trips.count(t.trip_id)) continue;
+        if (merge_strategy == 2 && feed_trips.count(t.trip_id)) {
+            throw std::runtime_error("Duplicate trip: " + data.string_pool.get(t.trip_id));
+        }
 
-        data.trips[feed_id][t.trip_id] = t;
+        feed_trips[t.trip_id] = t;
         count++;
         report_progress(bytes_read);
     }
@@ -1412,17 +1416,13 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
         if (stop_times_it == merged_stop_times.end()) continue;
 
         auto& vec = stop_times_it->second;
-        const size_t begin = data.stop_times.size();
         data.stop_times.insert(
             data.stop_times.end(),
             std::make_move_iterator(vec.begin()),
             std::make_move_iterator(vec.end())
         );
-        for (size_t i = begin; i < data.stop_times.size(); ++i) {
-            data.stop_times_by_stop_id[data.stop_times[i].stop_id].push_back(i);
-            data.stop_times_by_trip_id[data.stop_times[i].trip_id].push_back(i);
-        }
     }
+    data.rebuildStopTimeIndexes();
 
     if (log && !data.static_occupancies.empty()) log("Indexing static occupancies by trip_id...");
     for (size_t i = 0; i < data.static_occupancies.size(); ++i) {
@@ -1431,17 +1431,13 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
 
     // Build trip indexes after parsing, when the feed maps will no longer mutate.
     if (log) log("Building trip query indexes...");
-    for (const auto& [fid_str, feed_map] : data.trips) {
-        uint32_t fid_int = data.string_pool.get_id(fid_str);
-        for (const auto& [tid_str, trip] : feed_map) {
-            uint32_t tid_int = data.string_pool.get_id(tid_str);
-            if (fid_int != 0xFFFFFFFF && tid_int != 0xFFFFFFFF) {
-                uint64_t key = (static_cast<uint64_t>(fid_int) << 32) | tid_int;
-                data.trip_by_intern_id[key] = &trip;
+    for (const auto& [feed_id, feed_map] : data.trips) {
+        for (const auto& [trip_id, trip] : feed_map) {
+            data.trips_by_route_id[feed_id][trip.route_id].push_back(&trip);
+            data.trips_by_service_id[feed_id][trip.service_id].push_back(&trip);
+            if (trip.block_id != ST_NO_HEADSIGN) {
+                data.trips_by_block_id[feed_id][trip.block_id].push_back(&trip);
             }
-            data.trips_by_route_id[fid_str][trip.route_id].push_back(&trip);
-            data.trips_by_service_id[fid_str][trip.service_id].push_back(&trip);
-            if (trip.block_id.has_value()) data.trips_by_block_id[fid_str][trip.block_id.value()].push_back(&trip);
         }
     }
 

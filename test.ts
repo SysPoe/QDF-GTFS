@@ -390,6 +390,20 @@ async function testQualifiedIdentityAndRealtimeProvenance() {
 	assert.equal(gtfs.getShapes({ shape_id: "shared-shape" }).length, 2);
 	assert.equal(gtfs.getCalendars({ service_id: "shared-service" }).length, 2);
 	assert.equal(gtfs.getStopTimes({ trip_id: "shared-trip", feed_id: "feed-a" })[0].arrival_time, 91800);
+	const packedStopTimes = gtfs.getStopTimesPacked({
+		trip_ids: ["shared-trip", "next-trip"],
+		feed_id: "feed-a",
+	});
+	assert.equal(packedStopTimes.tripIds.length, 2);
+	assert.deepEqual(
+		Array.from(packedStopTimes.tripIds, (id) => packedStopTimes.strings[id]),
+		["shared-trip", "next-trip"],
+	);
+	assert.deepEqual(
+		Array.from(packedStopTimes.feedIds, (id) => packedStopTimes.strings[id]),
+		["feed-a", "feed-a"],
+	);
+	assert.deepEqual(Array.from(packedStopTimes.arrivalTimes), [91800, 93600]);
 	assert.equal(gtfs.getServiceDatesByTrip({ feedId: "feed-a", localId: "shared-trip" }).includes("20260805"), false);
 	assert.equal(gtfs.getServiceDatesByTrip({ feedId: "feed-b", localId: "shared-trip" }).includes("20260806"), true);
 	assert.deepEqual(gtfs.getStaticOccupancies({ feed_id: "feed-a", trip_id: "shared-trip", date: "20260803" }), [

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <climits>
 #include <limits>
+#include <stdexcept>
 
 
 namespace gtfs {
@@ -51,6 +52,13 @@ public:
         str_to_id.clear();
         id_to_str.clear();
     }
+
+    void release() {
+		clear();
+		std::unique_lock<std::shared_mutex> lock(mutex_);
+		str_to_id.rehash(0);
+		id_to_str.shrink_to_fit();
+	}
 
     // Heterogeneous intern: avoids allocation if already interned
     uint32_t intern(std::string_view sv) {
@@ -216,18 +224,20 @@ struct StaticOccupancy {
 static_assert(sizeof(StaticOccupancy) <= 24, "Static occupancy storage must remain compact");
 
 struct Trip {
-    std::string route_id;
-    std::string service_id;
-    std::string trip_id;
-    std::optional<std::string> trip_headsign = std::nullopt;
-    std::optional<std::string> trip_short_name = std::nullopt;
-    std::optional<int> direction_id = std::nullopt;
-    std::optional<std::string> block_id = std::nullopt;
-    std::optional<std::string> shape_id = std::nullopt;
-    std::optional<int> wheelchair_accessible = std::nullopt;
-    std::optional<int> bikes_allowed = std::nullopt;
-    std::string feed_id;
+    uint32_t route_id = 0;
+    uint32_t service_id = 0;
+    uint32_t trip_id = 0;
+    uint32_t trip_headsign = ST_NO_HEADSIGN;
+    uint32_t trip_short_name = ST_NO_HEADSIGN;
+    uint32_t block_id = ST_NO_HEADSIGN;
+    uint32_t shape_id = ST_NO_HEADSIGN;
+    uint32_t feed_id = 0;
+    int32_t direction_id = ST_NO_TIME;
+    int32_t wheelchair_accessible = ST_NO_TIME;
+    int32_t bikes_allowed = ST_NO_TIME;
 };
+
+static_assert(sizeof(Trip) <= 48, "Trip storage must remain compact");
 
 struct Transfer {
     std::optional<std::string> from_stop_id = std::nullopt;
@@ -251,6 +261,13 @@ struct Shape {
 };
 
 static_assert(sizeof(Shape) <= 40, "Shape storage must remain compact");
+
+struct IndexRange {
+    uint32_t begin = 0;
+    uint32_t count = 0;
+};
+
+static_assert(sizeof(IndexRange) == 8, "Index ranges must stay compact");
 
 struct FeedInfo {
     std::string feed_publisher_name;
@@ -398,29 +415,29 @@ public:
 
     std::vector<StopTime> stop_times; // Flat list, sorted by trip_id, stop_sequence
 
-    std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_stop_id; // index into stop_times
-    // A trip_id may legitimately occur in more than one feed. Keep every
-    // matching row here and apply feed filters while reading the index.
-    std::unordered_map<uint32_t, std::vector<size_t>> stop_times_by_trip_id; // index into stop_times
+    // Stop postings share one compact array instead of allocating one
+    // size_t vector per stop. Each map value addresses a slice of that array.
+    std::unordered_map<uint32_t, IndexRange> stop_times_by_stop_id;
+    std::vector<uint32_t> stop_time_indices_by_stop_id;
+    // Rows are contiguous for a feed-qualified trip. A bare trip_id can occur
+    // in several feeds, so its index can contain more than one range.
+    std::unordered_map<uint32_t, std::vector<IndexRange>> stop_times_by_trip_id;
 
     std::vector<StaticOccupancy> static_occupancies;
     std::unordered_map<uint32_t, std::vector<size_t>> static_occupancies_by_trip_id;
 
-    std::unordered_map<std::string, std::unordered_map<std::string, Trip>> trips;
+    std::unordered_map<uint32_t, std::unordered_map<uint32_t, Trip>> trips;
     std::vector<Transfer> transfers;
     // Secondary indexes keep common trip searches out of the full feed map.
     // Pointers are stable because unordered_map stores trips in node objects.
-    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<const Trip*>>> trips_by_route_id;
-    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<const Trip*>>> trips_by_service_id;
-    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<const Trip*>>> trips_by_block_id;
+    std::unordered_map<uint32_t, std::unordered_map<uint32_t, std::vector<const Trip*>>> trips_by_route_id;
+    std::unordered_map<uint32_t, std::unordered_map<uint32_t, std::vector<const Trip*>>> trips_by_service_id;
+    std::unordered_map<uint32_t, std::unordered_map<uint32_t, std::vector<const Trip*>>> trips_by_block_id;
     std::vector<Shape> shapes;
     // Each range is one feed-qualified shape. A bare shape_id can therefore
     // resolve to several ranges without scanning the full shape array.
     std::unordered_map<uint32_t, std::vector<std::pair<size_t, size_t>>> shape_ranges_by_id;
     std::vector<FeedInfo> feed_info;
-
-    // O(1) trip lookup by (feed_id_intern << 32 | trip_id_intern)
-    std::unordered_map<uint64_t, const Trip*> trip_by_intern_id;
 
     void clearRealtimeIndexes() {
         realtime_trip_updates_by_trip_id.clear();
@@ -459,6 +476,54 @@ public:
         }
     }
 
+    void rebuildStopTimeIndexes() {
+        if (stop_times.size() > std::numeric_limits<uint32_t>::max()) {
+            throw std::runtime_error("Too many stop-time rows for 32-bit indexes");
+        }
+
+        stop_times_by_stop_id.clear();
+        stop_time_indices_by_stop_id.clear();
+        stop_times_by_trip_id.clear();
+
+        std::unordered_map<uint32_t, uint32_t> stop_counts;
+        for (const auto& stop_time : stop_times) {
+            ++stop_counts[stop_time.stop_id];
+        }
+
+        stop_times_by_stop_id.reserve(stop_counts.size());
+        uint32_t next_offset = 0;
+        for (auto& [stop_id, count] : stop_counts) {
+            stop_times_by_stop_id.emplace(stop_id, IndexRange{next_offset, count});
+            next_offset += count;
+            count = 0;
+        }
+
+        stop_time_indices_by_stop_id.resize(stop_times.size());
+        for (uint32_t index = 0; index < static_cast<uint32_t>(stop_times.size()); ++index) {
+            const uint32_t stop_id = stop_times[index].stop_id;
+            const auto range = stop_times_by_stop_id.at(stop_id);
+            stop_time_indices_by_stop_id[range.begin + stop_counts[stop_id]++] = index;
+        }
+
+        size_t group_start = 0;
+        while (group_start < stop_times.size()) {
+            const auto& first = stop_times[group_start];
+            size_t group_end = group_start + 1;
+            while (
+                group_end < stop_times.size() &&
+                stop_times[group_end].feed_id == first.feed_id &&
+                stop_times[group_end].trip_id == first.trip_id
+            ) {
+                ++group_end;
+            }
+            stop_times_by_trip_id[first.trip_id].push_back(IndexRange{
+                static_cast<uint32_t>(group_start),
+                static_cast<uint32_t>(group_end - group_start),
+            });
+            group_start = group_end;
+        }
+    }
+
     void clearRealtime() {
         realtime_trip_updates.clear();
         realtime_vehicle_positions.clear();
@@ -475,6 +540,7 @@ public:
         stops.clear();
         stop_times.clear();
         stop_times_by_stop_id.clear();
+        stop_time_indices_by_stop_id.clear();
         stop_times_by_trip_id.clear();
         static_occupancies.clear();
         static_occupancies_by_trip_id.clear();
@@ -486,11 +552,42 @@ public:
         shapes.clear();
         shape_ranges_by_id.clear();
         feed_info.clear();
-        trip_by_intern_id.clear();
 
         clearRealtime();
         realtime_revision = 0;
     }
+
+	void releaseStaticStorage() {
+		clear();
+		agencies.rehash(0);
+		calendars.rehash(0);
+		calendar_dates.rehash(0);
+		routes.rehash(0);
+		stops.rehash(0);
+		stop_times.shrink_to_fit();
+		stop_times_by_stop_id.rehash(0);
+		stop_time_indices_by_stop_id.shrink_to_fit();
+		stop_times_by_trip_id.rehash(0);
+		static_occupancies.shrink_to_fit();
+		static_occupancies_by_trip_id.rehash(0);
+		trips.rehash(0);
+		transfers.shrink_to_fit();
+		trips_by_route_id.rehash(0);
+		trips_by_service_id.rehash(0);
+		trips_by_block_id.rehash(0);
+		shapes.shrink_to_fit();
+		shape_ranges_by_id.rehash(0);
+		feed_info.shrink_to_fit();
+		realtime_trip_updates.shrink_to_fit();
+		realtime_vehicle_positions.shrink_to_fit();
+		realtime_alerts.shrink_to_fit();
+		realtime_trip_updates_by_trip_id.rehash(0);
+		realtime_trip_updates_by_source_id.rehash(0);
+		realtime_vehicle_positions_by_trip_id.rehash(0);
+		realtime_vehicle_positions_by_source_id.rehash(0);
+		realtime_alerts_by_source_id.rehash(0);
+		string_pool.release();
+	}
 };
 
 }
