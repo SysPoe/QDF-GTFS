@@ -11,3 +11,4 @@ bun.lock
 
 !dist/
 !build/
+AGENTS.md
