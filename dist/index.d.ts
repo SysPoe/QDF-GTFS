@@ -1,4 +1,4 @@
-import { Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes, RealtimeChangedTrip } from './types.js';
+import { Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes, RealtimeChangedTrip, FetchedRealtimeSource } from './types.js';
 export * from './types.js';
 /**
  * Decode carriage details from a standalone vehicle feed.
@@ -18,6 +18,7 @@ export declare class GTFS {
     private cache;
     private mergeStrategy;
     private lastProgressUpdate;
+    private lastProgressByTask;
     private filesToLoad?;
     private skipStopTimes;
     private cacheMaxAgeMs;
@@ -80,6 +81,18 @@ export declare class GTFS {
     }): GTFSRealtimeUpdateResult;
     getLastChangedTripIds(): RealtimeChangedTrip[];
     getRealtimeRevision(): number;
+    /**
+     * Fetch phase: download every source concurrently without touching the
+     * snapshot. Results keep `sources` order. Protobuf decoding still happens
+     * inside the native commit; only transport is overlapped here.
+     */
+    fetchRealtimeSources(sources: GTFSRealtimeFeedConfig[]): Promise<FetchedRealtimeSource[]>;
+    /**
+     * Commit phase: apply prefetched payloads serially in array order, so the
+     * resulting snapshot is independent of download completion order. Failed
+     * fetches are reported without mutating the snapshot.
+     */
+    applyRealtimePayloads(fetched: FetchedRealtimeSource[]): GTFSRealtimeLoadResult[];
     updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[]): Promise<GTFSRealtimeLoadResult[]>;
     getRealtimeTripUpdates(filter?: RealtimeFilter): RealtimeTripUpdate[];
     getRealtimeVehiclePositions(filter?: RealtimeFilter): RealtimeVehiclePosition[];

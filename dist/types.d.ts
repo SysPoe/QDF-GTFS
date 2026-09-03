@@ -154,6 +154,18 @@ export interface GTFSRealtimeLoadResult {
     refresh?: GTFSRealtimeUpdateResult;
     error?: string;
 }
+/**
+ * One downloaded realtime payload before it touches the snapshot (fetch
+ * phase). Buffers stay caller-owned until `applyRealtimePayloads` commits
+ * them serially in array order, so independent fetches can overlap while
+ * mutation keeps a deterministic order.
+ */
+export interface FetchedRealtimeSource {
+    source: GTFSRealtimeFeedConfig;
+    ok: boolean;
+    data?: Buffer;
+    error?: string;
+}
 export interface RealtimeChangedTrip {
     trip_id: string;
     feed_id: string;

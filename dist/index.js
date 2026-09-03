@@ -1,6 +1,7 @@
 import * as https from 'https';
 import * as http from 'http';
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import { createRequire } from 'module';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -224,6 +225,26 @@ export function extractZipEntry(archive, requestedEntry) {
 }
 const SNAPSHOT_VERSION = 2;
 const SNAPSHOT_MAGIC = "QDFS";
+/** Bound on concurrent static source acquisitions (cache I/O + download). */
+const STATIC_ACQUIRE_CONCURRENCY = 4;
+/** Run `fn` over `items` with at most `limit` tasks in flight, preserving order. */
+async function mapWithConcurrency(items, limit, fn) {
+    const results = new Array(items.length);
+    if (items.length === 0)
+        return results;
+    let next = 0;
+    const workerCount = Math.min(Math.max(limit, 1), items.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+        while (true) {
+            const index = next++;
+            if (index >= items.length)
+                return;
+            results[index] = await fn(items[index], index);
+        }
+    });
+    await Promise.all(workers);
+    return results;
+}
 export class GTFS {
     addonInstance;
     logger;
@@ -233,6 +254,7 @@ export class GTFS {
     cache;
     mergeStrategy;
     lastProgressUpdate = 0;
+    lastProgressByTask = new Map();
     filesToLoad;
     skipStopTimes;
     cacheMaxAgeMs;
@@ -268,9 +290,13 @@ export class GTFS {
     }
     showProgress(task, current, total, speed, eta) {
         const now = Date.now();
-        if (now - this.lastProgressUpdate < 100 && (total <= 0 || current < total)) {
+        // Per-task throttle so concurrent acquisitions don't suppress each other.
+        // Task labels already include the feed id (e.g. `Downloading GTFS (feed-id)`).
+        const lastForTask = this.lastProgressByTask.get(task) ?? 0;
+        if (now - lastForTask < 100 && (total <= 0 || current < total)) {
             return;
         }
+        this.lastProgressByTask.set(task, now);
         this.lastProgressUpdate = now;
         const percent = total > 0 ? (current / total) * 100 : 0;
         if (this.progressCallback) {
@@ -359,93 +385,154 @@ export class GTFS {
             throw new Error('GTFS feed IDs must be unique');
         // Do not destroy current snapshot before replacement is validated; clear JS caches only
         // this.clearStatic() removed for immutable snapshot semantics
-        const buffers = [];
-        const results = [];
-        const pendingCacheWrites = [];
-        const sourceBuffers = new Map();
-        for (const config of feedList) {
-            let buffer = null;
-            let staleBuffer = null;
-            let loadedFrom = "network";
-            const cacheDir = this.cacheDir || './cache';
-            let cachePath = '';
-            const sourceKey = `${config.url}|${JSON.stringify(config.headers ?? {})}`;
-            const shared = sourceBuffers.get(sourceKey);
-            if (shared) {
-                buffer = shared.buffer;
-                loadedFrom = shared.source;
-                if (this.logger)
-                    this.logger(`Reusing downloaded GTFS archive for ${config.id}`);
-            }
-            if (!buffer && this.cache) {
-                const hash = crypto.createHash('md5').update(sourceKey).digest('hex');
-                cachePath = path.join(cacheDir, hash);
-                const legacyHash = crypto.createHash('md5').update(`${sourceKey}|${config.archiveEntry ?? ''}`).digest('hex');
-                const legacyCachePath = path.join(cacheDir, legacyHash);
-                const readableCachePath = fs.existsSync(cachePath) ? cachePath : legacyCachePath;
-                if (fs.existsSync(readableCachePath)) {
-                    const stats = fs.statSync(readableCachePath);
-                    const age = Date.now() - stats.mtimeMs;
-                    try {
-                        staleBuffer = fs.readFileSync(readableCachePath);
-                    }
-                    catch (e) {
-                        if (this.logger)
-                            this.logger(`Failed to read cache: ${e}`);
-                    }
-                    if (age < this.cacheMaxAgeMs && staleBuffer) {
-                        if (this.logger)
-                            this.logger(`Loading from cache: ${readableCachePath}`);
-                        buffer = staleBuffer;
-                        loadedFrom = "fresh-cache";
-                    }
-                    else {
-                        if (this.logger)
-                            this.logger(`Cache expired for ${config.url}, redownloading...`);
-                    }
-                }
-            }
-            if (!buffer) {
-                if (this.logger) {
-                    if (this.ansi) {
-                        this.logger(`\x1b[32mDownloading ${config.url}...\x1b[0m`);
-                    }
-                    else {
-                        this.logger(`Downloading ${config.url}...`);
-                    }
-                }
-                try {
-                    const task = `Downloading GTFS (${config.id})`;
-                    this.lastProgressUpdate = 0;
-                    this.showProgress(`Connecting to GTFS (${config.id})`, 0, 0, 0, 0);
-                    buffer = await this.download(config.url, task, true, config.headers);
-                    loadedFrom = "network";
-                }
-                catch (error) {
-                    if (!this.staleIfError || !staleBuffer)
-                        throw error;
-                    buffer = staleBuffer;
-                    loadedFrom = "stale-cache";
-                    if (this.logger)
-                        this.logger(`Using stale cache for ${config.url}: ${error instanceof Error ? error.message : String(error)}`);
-                }
-                if (loadedFrom === "network" && this.cache && cachePath) {
-                    pendingCacheWrites.push({ cacheDir, cachePath, buffer });
-                }
-            }
-            if (!sourceBuffers.has(sourceKey))
-                sourceBuffers.set(sourceKey, { buffer: buffer, source: loadedFrom });
-            if (config.archiveEntry) {
-                this.lastProgressUpdate = 0;
-                this.showProgress(`Extracting GTFS (${config.id})`, 0, 0, 0, 0);
-                const extracted = extractZipEntry(buffer, config.archiveEntry);
-                this.showProgress(`Extracting GTFS (${config.id})`, extracted.length, extracted.length, 0, 0);
-                buffers.push(extracted);
+        const cacheDir = this.cacheDir || './cache';
+        // Deduplicate by transport-level source BEFORE starting tasks so feeds sharing
+        // one archive URL (e.g. vic-vline/vic-metro with different archiveEntry)
+        // trigger exactly one cache read / download. archiveEntry extraction stays per feed.
+        const sourceKeyOf = (config) => `${config.url}|${JSON.stringify(config.headers ?? {})}`;
+        const sourceKeys = feedList.map(sourceKeyOf);
+        const indicesBySource = new Map();
+        const uniqueSourceKeys = [];
+        sourceKeys.forEach((sourceKey, feedIndex) => {
+            const existing = indicesBySource.get(sourceKey);
+            if (existing) {
+                existing.push(feedIndex);
             }
             else {
-                buffers.push(buffer);
+                indicesBySource.set(sourceKey, [feedIndex]);
+                uniqueSourceKeys.push(sourceKey);
             }
-            results.push({ id: config.id, source: loadedFrom });
+        });
+        const specs = uniqueSourceKeys.map((sourceKey) => {
+            const indices = indicesBySource.get(sourceKey);
+            const representative = feedList[indices[0]];
+            const cachePath = this.cache
+                ? path.join(cacheDir, crypto.createHash('md5').update(sourceKey).digest('hex'))
+                : '';
+            const legacyPaths = [];
+            if (this.cache) {
+                for (const feedIndex of indices) {
+                    const legacyHash = crypto.createHash('md5')
+                        .update(`${sourceKey}|${feedList[feedIndex].archiveEntry ?? ''}`).digest('hex');
+                    const legacyPath = path.join(cacheDir, legacyHash);
+                    if (legacyPath !== cachePath && !legacyPaths.includes(legacyPath)) {
+                        legacyPaths.push(legacyPath);
+                    }
+                }
+            }
+            return {
+                sourceKey,
+                url: representative.url,
+                headers: representative.headers,
+                cachePath,
+                legacyPaths,
+                feedIds: indices.map((feedIndex) => feedList[feedIndex].id),
+            };
+        });
+        const acquireSource = async (spec) => {
+            let staleBuffer = null;
+            let staleAgeMs = Number.POSITIVE_INFINITY;
+            let readablePath = null;
+            if (this.cache && spec.cachePath) {
+                // Single successful read per unique source: unified path first,
+                // then per-feed legacy paths (distinct archiveEntry values) in feed order.
+                const candidates = [spec.cachePath, ...spec.legacyPaths];
+                for (const candidate of candidates) {
+                    try {
+                        const stats = await fsp.stat(candidate);
+                        try {
+                            staleBuffer = await fsp.readFile(candidate);
+                        }
+                        catch (e) {
+                            if (this.logger)
+                                this.logger(`Failed to read cache: ${e}`);
+                            continue;
+                        }
+                        staleAgeMs = Date.now() - stats.mtimeMs;
+                        readablePath = candidate;
+                        break;
+                    }
+                    catch {
+                        continue;
+                    }
+                }
+                if (staleBuffer && readablePath && staleAgeMs < this.cacheMaxAgeMs) {
+                    if (this.logger)
+                        this.logger(`Loading from cache: ${readablePath}`);
+                    return { buffer: staleBuffer, source: "fresh-cache" };
+                }
+                if (staleBuffer) {
+                    if (this.logger)
+                        this.logger(`Cache expired for ${spec.url}, redownloading...`);
+                }
+            }
+            if (this.logger) {
+                if (this.ansi) {
+                    this.logger(`\x1b[32mDownloading ${spec.url}...\x1b[0m`);
+                }
+                else {
+                    this.logger(`Downloading ${spec.url}...`);
+                }
+            }
+            try {
+                // Labels already namespace the feed id(s); combined form keeps every
+                // sharing feed visible while giving concurrent tasks distinct keys.
+                const label = spec.feedIds.length === 1 ? spec.feedIds[0] : spec.feedIds.join(', ');
+                const task = `Downloading GTFS (${label})`;
+                const connectTask = `Connecting to GTFS (${label})`;
+                this.lastProgressUpdate = 0;
+                this.lastProgressByTask.delete(task);
+                this.lastProgressByTask.delete(connectTask);
+                for (const feedId of spec.feedIds) {
+                    this.lastProgressByTask.delete(`Downloading GTFS (${feedId})`);
+                    this.lastProgressByTask.delete(`Connecting to GTFS (${feedId})`);
+                }
+                this.showProgress(connectTask, 0, 0, 0, 0);
+                const buffer = await this.download(spec.url, task, true, spec.headers);
+                return { buffer, source: "network" };
+            }
+            catch (error) {
+                if (!this.staleIfError || !staleBuffer)
+                    throw error;
+                if (this.logger)
+                    this.logger(`Using stale cache for ${spec.url}: ${error instanceof Error ? error.message : String(error)}`);
+                return { buffer: staleBuffer, source: "stale-cache" };
+            }
+        };
+        const acquiredInSpecOrder = await mapWithConcurrency(specs, STATIC_ACQUIRE_CONCURRENCY, acquireSource);
+        const acquiredBySource = new Map();
+        const pendingCacheWrites = [];
+        specs.forEach((spec, specIndex) => {
+            const acquired = acquiredInSpecOrder[specIndex];
+            acquiredBySource.set(spec.sourceKey, acquired);
+            if (acquired.source === "network" && this.cache && spec.cachePath) {
+                pendingCacheWrites.push({ cacheDir, cachePath: spec.cachePath, buffer: acquired.buffer });
+            }
+        });
+        // Expand back to feedList order so buffers/results/snapshot key stay ordered.
+        const buffers = new Array(feedList.length);
+        const results = new Array(feedList.length);
+        for (let feedIndex = 0; feedIndex < feedList.length; feedIndex++) {
+            const config = feedList[feedIndex];
+            const acquired = acquiredBySource.get(sourceKeys[feedIndex]);
+            const firstIndexForSource = indicesBySource.get(sourceKeys[feedIndex])[0];
+            if (feedIndex !== firstIndexForSource && this.logger) {
+                this.logger(`Reusing downloaded GTFS archive for ${config.id}`);
+            }
+            let finalBuffer;
+            if (config.archiveEntry) {
+                const extractTask = `Extracting GTFS (${config.id})`;
+                this.lastProgressUpdate = 0;
+                this.lastProgressByTask.delete(extractTask);
+                this.showProgress(extractTask, 0, 0, 0, 0);
+                finalBuffer = extractZipEntry(acquired.buffer, config.archiveEntry);
+                this.showProgress(extractTask, finalBuffer.length, finalBuffer.length, 0, 0);
+            }
+            else {
+                finalBuffer = acquired.buffer;
+            }
+            buffers[feedIndex] = finalBuffer;
+            results[feedIndex] = { id: config.id, source: acquired.source };
         }
         const feedIds = feedList.map((feed) => feed.id);
         // Compute effective files for snapshot key (same logic as loadFromBuffers)
@@ -467,16 +554,17 @@ export class GTFS {
         // }
         // Only replace durable caches after every downloaded ZIP parsed successfully.
         for (const { cacheDir, cachePath, buffer } of pendingCacheWrites) {
-            if (!fs.existsSync(cacheDir))
-                fs.mkdirSync(cacheDir, { recursive: true });
             const temporaryPath = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
             try {
-                fs.writeFileSync(temporaryPath, buffer);
-                fs.renameSync(temporaryPath, cachePath);
+                await fsp.mkdir(cacheDir, { recursive: true });
+                await fsp.writeFile(temporaryPath, buffer);
+                await fsp.rename(temporaryPath, cachePath);
             }
             finally {
-                if (fs.existsSync(temporaryPath))
-                    fs.unlinkSync(temporaryPath);
+                try {
+                    await fsp.unlink(temporaryPath);
+                }
+                catch { }
             }
         }
         return results;
@@ -700,27 +788,53 @@ export class GTFS {
     }
     getLastChangedTripIds() { return [...this.lastChangedTripIds]; }
     getRealtimeRevision() { return this.lastRealtimeRevision; }
-    async updateRealtimeFromUrl(sources) {
-        const allChanged = [];
-        let lastRevision = this.lastRealtimeRevision;
-        const results = await Promise.all(sources.map(async (source) => {
+    /**
+     * Fetch phase: download every source concurrently without touching the
+     * snapshot. Results keep `sources` order. Protobuf decoding still happens
+     * inside the native commit; only transport is overlapped here.
+     */
+    async fetchRealtimeSources(sources) {
+        return Promise.all(sources.map(async (source) => {
             try {
                 const data = await this.download(source.url, `Downloading ${source.kind}`, false, source.headers);
-                const refresh = this.updateRealtime({ kind: source.kind, data, targetFeedId: source.targetFeedId, sourceId: source.id });
+                return { source, ok: true, data };
+            }
+            catch (error) {
+                return { source, ok: false, error: error instanceof Error ? error.message : String(error) };
+            }
+        }));
+    }
+    /**
+     * Commit phase: apply prefetched payloads serially in array order, so the
+     * resulting snapshot is independent of download completion order. Failed
+     * fetches are reported without mutating the snapshot.
+     */
+    applyRealtimePayloads(fetched) {
+        const allChanged = [];
+        let lastRevision = this.lastRealtimeRevision;
+        const results = fetched.map((entry) => {
+            if (!entry.ok || !entry.data) {
+                return { id: entry.source.id, ok: false, error: entry.error ?? "fetch failed" };
+            }
+            try {
+                const refresh = this.updateRealtime({ kind: entry.source.kind, data: entry.data, targetFeedId: entry.source.targetFeedId, sourceId: entry.source.id });
                 if (refresh?.changed_trip_ids)
                     allChanged.push(...refresh.changed_trip_ids);
                 if (refresh?.realtime_revision)
                     lastRevision = refresh.realtime_revision;
-                return { id: source.id, ok: true, refresh };
+                return { id: entry.source.id, ok: true, refresh };
             }
             catch (error) {
-                return { id: source.id, ok: false, error: error instanceof Error ? error.message : String(error) };
+                return { id: entry.source.id, ok: false, error: error instanceof Error ? error.message : String(error) };
             }
-        }));
+        });
         // Aggregate for sparse update consumers
         this.lastChangedTripIds = allChanged;
         this.lastRealtimeRevision = lastRevision;
         return results;
+    }
+    async updateRealtimeFromUrl(sources) {
+        return this.applyRealtimePayloads(await this.fetchRealtimeSources(sources));
     }
     getRealtimeTripUpdates(filter) {
         return this.addonInstance.getRealtimeTripUpdates(filter || {});
@@ -764,6 +878,7 @@ export class GTFS {
                 const data = [];
                 const startTime = Date.now();
                 this.lastProgressUpdate = 0;
+                this.lastProgressByTask.delete(taskName);
                 this.showProgress(taskName, 0, total, 0, 0);
                 res.on('data', (chunk) => {
                     data.push(chunk);
@@ -783,6 +898,7 @@ export class GTFS {
                         const elapsed = (now - startTime) / 1000;
                         const speed = elapsed > 0 ? current / elapsed : 0;
                         this.lastProgressUpdate = 0;
+                        this.lastProgressByTask.delete(taskName);
                         // A number of official feeds use chunked transfer encoding. Once the
                         // stream ends, its downloaded byte count is the actual total.
                         this.showProgress(taskName, current, total || current, speed, 0);
