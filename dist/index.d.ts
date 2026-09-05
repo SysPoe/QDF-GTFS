@@ -25,9 +25,6 @@ export declare class GTFS {
     private staleIfError;
     private requestTimeoutMs;
     private serviceDatesCache;
-    private serviceDatesSets;
-    private serviceIdsByDateCache;
-    private tripsByServiceIdCache;
     private lastChangedTripIds;
     private lastRealtimeRevision;
     actions: GTFSActions;
@@ -64,7 +61,6 @@ export declare class GTFS {
     getFeedInfo(): FeedInfo[];
     private qualifiedKey;
     private getServiceDatesMap;
-    private getTripsByServiceId;
     getTrips(filter?: TripQuery | Partial<Trip>): Trip[];
     getTransfers(filter?: TransferQuery | Partial<Transfer>): Transfer[];
     getShapes(filter?: Partial<Shape>): Shape[];

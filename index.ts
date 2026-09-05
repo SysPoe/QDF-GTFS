@@ -264,9 +264,6 @@ export class GTFS {
 	private staleIfError: boolean;
 	private requestTimeoutMs: number;
     private serviceDatesCache: Map<string, string[]> | null = null;
-    private serviceDatesSets: Map<string, Set<string>> | null = null;
-    private serviceIdsByDateCache: Map<string, QualifiedEntityId[]> | null = null;
-    private tripsByServiceIdCache: Map<string, Trip[]> | null = null;
     private lastChangedTripIds: RealtimeChangedTrip[] = [];
     private lastRealtimeRevision: number = 0;
     public actions: GTFSActions = {
@@ -356,9 +353,6 @@ export class GTFS {
             if (stat.size < 32) return false;
             this.addonInstance.loadCompiledSnapshot(p);
             this.serviceDatesCache = null;
-            this.serviceDatesSets = null;
-            this.serviceIdsByDateCache = null;
-            this.tripsByServiceIdCache = null;
             if (this.logger) this.logger(`Loaded compiled snapshot ${p}`);
             return true;
         } catch (e) {
@@ -608,9 +602,6 @@ export class GTFS {
         return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge, feedIds, effectiveFiles)
             .then((result: void) => {
                 this.serviceDatesCache = null;
-                this.serviceDatesSets = null;
-                this.serviceIdsByDateCache = null;
-                this.tripsByServiceIdCache = null;
                 return result;
             });
     }
@@ -651,9 +642,6 @@ export class GTFS {
     clearStatic(): void {
         this.addonInstance.clearStatic();
         this.serviceDatesCache = null;
-        this.serviceDatesSets = null;
-        this.serviceIdsByDateCache = null;
-        this.tripsByServiceIdCache = null;
     }
 
     getStaticOccupancies(query: StaticOccupancyQuery): StaticOccupancy[] {
@@ -669,7 +657,7 @@ export class GTFS {
     }
 
     private getServiceDatesMap(): Map<string, string[]> {
-        if (this.serviceDatesCache && this.serviceDatesSets && this.serviceIdsByDateCache) return this.serviceDatesCache;
+        if (this.serviceDatesCache) return this.serviceDatesCache;
 
         const calendars = this.getCalendars();
         const calendarDates = this.getCalendarDates();
@@ -737,47 +725,12 @@ export class GTFS {
         }
 
         const sortedServiceDates = new Map<string, string[]>();
-        const idsByDate = new Map<string, QualifiedEntityId[]>();
-
-        for (const calendar of calendars) {
-            const key = this.qualifiedKey(calendar.feed_id, calendar.service_id);
-            const dates = Array.from(serviceDates.get(key) ?? []).sort();
-            sortedServiceDates.set(key, dates);
-            for (const d of dates) {
-                const ids = idsByDate.get(d) ?? [];
-                if (!ids.some((id) => id.feedId === calendar.feed_id && id.localId === calendar.service_id)) {
-                    ids.push({ feedId: calendar.feed_id, localId: calendar.service_id });
-                }
-                idsByDate.set(d, ids);
-            }
+        for (const [key, dates] of serviceDates) {
+            sortedServiceDates.set(key, [...dates].sort());
         }
 
-        for (const calendarDate of calendarDates) {
-            const key = this.qualifiedKey(calendarDate.feed_id, calendarDate.service_id);
-            if (!sortedServiceDates.has(key)) {
-                const dates = Array.from(serviceDates.get(key) ?? []).sort();
-                sortedServiceDates.set(key, dates);
-            }
-        }
-
-        this.serviceDatesSets = serviceDates;
         this.serviceDatesCache = sortedServiceDates;
-        this.serviceIdsByDateCache = idsByDate;
         return sortedServiceDates;
-    }
-
-    private getTripsByServiceId(): Map<string, Trip[]> {
-        if (this.tripsByServiceIdCache) return this.tripsByServiceIdCache;
-        const allTrips = this.addonInstance.getTrips({});
-        const map = new Map<string, Trip[]>();
-        for (const trip of allTrips) {
-            const key = this.qualifiedKey(trip.feed_id, trip.service_id);
-            const trips = map.get(key) ?? [];
-            trips.push(trip);
-            map.set(key, trips);
-        }
-        this.tripsByServiceIdCache = map;
-        return map;
     }
 
     getTrips(filter?: TripQuery | Partial<Trip>): Trip[] {

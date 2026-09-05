@@ -261,9 +261,6 @@ export class GTFS {
     staleIfError;
     requestTimeoutMs;
     serviceDatesCache = null;
-    serviceDatesSets = null;
-    serviceIdsByDateCache = null;
-    tripsByServiceIdCache = null;
     lastChangedTripIds = [];
     lastRealtimeRevision = 0;
     actions = {
@@ -344,9 +341,6 @@ export class GTFS {
                 return false;
             this.addonInstance.loadCompiledSnapshot(p);
             this.serviceDatesCache = null;
-            this.serviceDatesSets = null;
-            this.serviceIdsByDateCache = null;
-            this.tripsByServiceIdCache = null;
             if (this.logger)
                 this.logger(`Loaded compiled snapshot ${p}`);
             return true;
@@ -611,9 +605,6 @@ export class GTFS {
         return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge, feedIds, effectiveFiles)
             .then((result) => {
             this.serviceDatesCache = null;
-            this.serviceDatesSets = null;
-            this.serviceIdsByDateCache = null;
-            this.tripsByServiceIdCache = null;
             return result;
         });
     }
@@ -646,9 +637,6 @@ export class GTFS {
     clearStatic() {
         this.addonInstance.clearStatic();
         this.serviceDatesCache = null;
-        this.serviceDatesSets = null;
-        this.serviceIdsByDateCache = null;
-        this.tripsByServiceIdCache = null;
     }
     getStaticOccupancies(query) {
         return this.addonInstance.getStaticOccupancies(query);
@@ -660,7 +648,7 @@ export class GTFS {
         return `${feedId.length}:${feedId}${localId}`;
     }
     getServiceDatesMap() {
-        if (this.serviceDatesCache && this.serviceDatesSets && this.serviceIdsByDateCache)
+        if (this.serviceDatesCache)
             return this.serviceDatesCache;
         const calendars = this.getCalendars();
         const calendarDates = this.getCalendarDates();
@@ -716,44 +704,11 @@ export class GTFS {
             }
         }
         const sortedServiceDates = new Map();
-        const idsByDate = new Map();
-        for (const calendar of calendars) {
-            const key = this.qualifiedKey(calendar.feed_id, calendar.service_id);
-            const dates = Array.from(serviceDates.get(key) ?? []).sort();
-            sortedServiceDates.set(key, dates);
-            for (const d of dates) {
-                const ids = idsByDate.get(d) ?? [];
-                if (!ids.some((id) => id.feedId === calendar.feed_id && id.localId === calendar.service_id)) {
-                    ids.push({ feedId: calendar.feed_id, localId: calendar.service_id });
-                }
-                idsByDate.set(d, ids);
-            }
+        for (const [key, dates] of serviceDates) {
+            sortedServiceDates.set(key, [...dates].sort());
         }
-        for (const calendarDate of calendarDates) {
-            const key = this.qualifiedKey(calendarDate.feed_id, calendarDate.service_id);
-            if (!sortedServiceDates.has(key)) {
-                const dates = Array.from(serviceDates.get(key) ?? []).sort();
-                sortedServiceDates.set(key, dates);
-            }
-        }
-        this.serviceDatesSets = serviceDates;
         this.serviceDatesCache = sortedServiceDates;
-        this.serviceIdsByDateCache = idsByDate;
         return sortedServiceDates;
-    }
-    getTripsByServiceId() {
-        if (this.tripsByServiceIdCache)
-            return this.tripsByServiceIdCache;
-        const allTrips = this.addonInstance.getTrips({});
-        const map = new Map();
-        for (const trip of allTrips) {
-            const key = this.qualifiedKey(trip.feed_id, trip.service_id);
-            const trips = map.get(key) ?? [];
-            trips.push(trip);
-            map.set(key, trips);
-        }
-        this.tripsByServiceIdCache = map;
-        return map;
     }
     getTrips(filter) {
         return this.addonInstance.getTrips(filter || {});
