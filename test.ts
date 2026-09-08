@@ -708,6 +708,46 @@ async function testIndexedLookupScaling() {
 	);
 }
 
+async function testSharedCalendarExpansionKeepsServiceExceptionsSeparate() {
+	const header = "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n";
+	const daily = (service: string) => `${service},1,1,1,1,1,1,1,20240228,20240302\n`;
+	const feed = (calendar: string, exceptions: string) => createZip({
+		"calendar.txt": header + calendar,
+		"calendar_dates.txt": "service_id,date,exception_type\n" + exceptions,
+	});
+	const gtfs = new GTFS({ filesToLoad: ["calendar.txt", "calendar_dates.txt"] });
+	await gtfs.loadFromBuffers([
+		feed(daily("shared") + daily("second") + "sunday,0,0,0,0,0,0,1,20240303,20240303\n" +
+			"weekend,0,0,0,0,0,1,1,20240228,20240302\n",
+			"shared,20240229,2\nsecond,20240303,1\nexception-only,20240229,1\n"),
+		feed(daily("shared"), "shared,20240301,2\n"),
+	], ["feed-a", "feed-b"]);
+	const originalSetDate = Date.prototype.setUTCDate;
+	let dateSteps = 0;
+	Date.prototype.setUTCDate = function (date: number) {
+		dateSteps++;
+		return originalSetDate.call(this, date);
+	};
+	try {
+		const dates = (feedId: string, localId: string) => gtfs.getServiceDates({ feedId, localId });
+		assert.deepEqual(dates("feed-a", "shared"), ["20240228", "20240301", "20240302"]);
+		assert.deepEqual(dates("feed-a", "second"), ["20240228", "20240229", "20240301", "20240302", "20240303"]);
+		assert.deepEqual(dates("feed-b", "shared"), ["20240228", "20240229", "20240302"]);
+		assert.deepEqual(dates("feed-a", "exception-only"), ["20240229"]);
+		assert.deepEqual(dates("feed-a", "sunday"), ["20240303"]);
+		assert.deepEqual(dates("feed-a", "weekend"), ["20240302"]);
+		assert.deepEqual(dates("missing", "shared"), []);
+		assert.equal(dateSteps, 9, "identical date ranges and weekdays must be expanded once per cache build");
+		dates("feed-a", "shared").push("20990101");
+		assert.equal(dates("feed-b", "shared").includes("20990101"), false);
+	} finally {
+		Date.prototype.setUTCDate = originalSetDate;
+	}
+	gtfs.clearStatic();
+	assert.deepEqual(gtfs.getServiceDates({ feedId: "feed-a", localId: "shared" }), []);
+}
+
+await testSharedCalendarExpansionKeepsServiceExceptionsSeparate();
 await testShapeFiltersAndMergeStrategies();
 await testQualifiedIdentityAndRealtimeProvenance();
 await testTripStopTimeIndexAcrossFeeds();

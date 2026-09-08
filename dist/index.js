@@ -653,41 +653,37 @@ export class GTFS {
         const calendars = this.getCalendars();
         const calendarDates = this.getCalendarDates();
         const serviceDates = new Map();
+        // Services often share a calendar pattern. Expand it once, but keep
+        // each service's date set separate so exceptions cannot cross feeds.
+        const expandedPatterns = new Map();
         for (const calendar of calendars) {
             const { service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date } = calendar;
             const key = this.qualifiedKey(calendar.feed_id, service_id);
             if (!serviceDates.has(key))
                 serviceDates.set(key, new Set());
-            const sDateStr = String(start_date);
-            const eDateStr = String(end_date);
-            let currentDate = new Date(Date.UTC(Number(sDateStr.substring(0, 4)), Number(sDateStr.substring(4, 6)) - 1, Number(sDateStr.substring(6, 8))));
-            const endDate = new Date(Date.UTC(Number(eDateStr.substring(0, 4)), Number(eDateStr.substring(4, 6)) - 1, Number(eDateStr.substring(6, 8))));
-            while (currentDate <= endDate) {
-                const dayOfWeek = currentDate.getUTCDay(); // 0 for Sunday, 1 for Monday, etc.
-                let serviceRuns = false;
-                if (dayOfWeek === 1 && monday)
-                    serviceRuns = true;
-                else if (dayOfWeek === 2 && tuesday)
-                    serviceRuns = true;
-                else if (dayOfWeek === 3 && wednesday)
-                    serviceRuns = true;
-                else if (dayOfWeek === 4 && thursday)
-                    serviceRuns = true;
-                else if (dayOfWeek === 5 && friday)
-                    serviceRuns = true;
-                else if (dayOfWeek === 6 && saturday)
-                    serviceRuns = true;
-                else if (dayOfWeek === 0 && sunday)
-                    serviceRuns = true;
-                if (serviceRuns) {
-                    const y = currentDate.getUTCFullYear();
-                    const m = currentDate.getUTCMonth() + 1;
-                    const d = currentDate.getUTCDate();
-                    const dateStr = `${y}${m < 10 ? '0' : ''}${m}${d < 10 ? '0' : ''}${d}`;
-                    serviceDates.get(key).add(dateStr);
+            const weekdays = [sunday, monday, tuesday, wednesday, thursday, friday, saturday];
+            const patternKey = JSON.stringify([start_date, end_date, ...weekdays]);
+            let expandedDates = expandedPatterns.get(patternKey);
+            if (!expandedDates) {
+                expandedDates = [];
+                const sDateStr = String(start_date);
+                const eDateStr = String(end_date);
+                const currentDate = new Date(Date.UTC(Number(sDateStr.substring(0, 4)), Number(sDateStr.substring(4, 6)) - 1, Number(sDateStr.substring(6, 8))));
+                const endDate = new Date(Date.UTC(Number(eDateStr.substring(0, 4)), Number(eDateStr.substring(4, 6)) - 1, Number(eDateStr.substring(6, 8))));
+                while (currentDate <= endDate) {
+                    if (weekdays[currentDate.getUTCDay()]) {
+                        const y = currentDate.getUTCFullYear();
+                        const m = currentDate.getUTCMonth() + 1;
+                        const d = currentDate.getUTCDate();
+                        expandedDates.push(`${y}${m < 10 ? '0' : ''}${m}${d < 10 ? '0' : ''}${d}`);
+                    }
+                    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
                 }
-                currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+                expandedPatterns.set(patternKey, expandedDates);
             }
+            const datesForService = serviceDates.get(key);
+            for (const date of expandedDates)
+                datesForService.add(date);
         }
         for (const calendarDate of calendarDates) {
             const { service_id, date, exception_type } = calendarDate;
