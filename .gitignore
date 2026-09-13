@@ -5,10 +5,14 @@ node_modules/
 .DS_Store
 .idea
 package-lock.json
-test_cache
-cache
+test_cache/
+cache/
 bun.lock
-
-!dist/
-!build/
+# Native and stale generated outputs must never be committed going forward.
+# Already-tracked build/dist files stay tracked until an explicit untracking
+# decision; these rules only keep new/stale artifacts (e.g. dist/build copies
+# of the native ABI, temp cache writes, pack tarballs) untracked.
+dist/build/
+**/*.tmp.*
+*.tgz
 AGENTS.md

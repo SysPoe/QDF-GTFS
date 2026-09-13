@@ -5,14 +5,16 @@ import * as fsp from 'fs/promises';
 import { createRequire } from 'module';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import * as os from 'os';
 import * as crypto from 'crypto';
+import * as net from 'net';
+import * as dns from 'dns';
 import { inflateRawSync } from 'zlib';
 import {
-    Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Shape, Calendar, CalendarDate,
+    Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Frequency, Shape, Calendar, CalendarDate,
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
     GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId,
-    RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes, RealtimeChangedTrip, FetchedRealtimeSource
+    RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes, RealtimeChangedTrip, FetchedRealtimeSource,
+    RealtimeFetchOptions
 } from './types.js';
 
 export * from './types.js';
@@ -25,15 +27,17 @@ const r = createRequire(import.meta.url);
 let GTFSAddon: any;
 try {
     try {
-        const binding = r(path.join(__dirname, './build/Release/gtfs_addon.node'));
+        // Both source execution and dist/index.js resolve the addon from the
+        // package root. Never prefer a stale dist/build copy left by an older
+        // build, because it may expose an incompatible native ABI.
+        const packageRoot = path.basename(__dirname) === 'dist'
+            ? path.dirname(__dirname)
+            : __dirname;
+        const binding = r(path.join(packageRoot, 'build/Release/gtfs_addon.node'));
         GTFSAddon = binding.GTFSAddon;
     } catch (e) {
-        try {
-            const binding = r(path.join(__dirname, '../build/Release/gtfs_addon.node'));
-            GTFSAddon = binding.GTFSAddon;
-        } catch (e2) {
-            if (process.env.NODE_ENV === 'test') {
-                GTFSAddon = class MockAddon {
+        if (process.env.NODE_ENV === 'test') {
+            GTFSAddon = class MockAddon {
                     loadFromBuffers() { }
                     getFeedInfo() { return []; }
                     getRoutes() { return []; }
@@ -55,6 +59,7 @@ try {
                     getStaticOccupancies() { return []; }
                     getTrips() { return []; }
                     getTransfers() { return []; }
+                    getFrequencies() { return []; }
                     getShapes() { return []; }
                     getCalendars() { return []; }
                     getCalendarDates() { return []; }
@@ -65,10 +70,9 @@ try {
                     getRealtimeVehiclePositions() { return []; }
                     getRealtimeAlerts() { return []; }
                     clearStatic() { }
-                };
-            } else {
-                throw e;
-            }
+            };
+        } else {
+            throw e;
         }
     }
 } catch (e) {
@@ -111,13 +115,19 @@ function protobufMessages(buffer: Buffer, fieldNumber: number): Buffer[] {
     while (cursor.offset < buffer.length) {
         const tag = readVarint(buffer, cursor), field = Math.floor(tag / 8), wire = tag & 7;
         if (wire === 0) readVarint(buffer, cursor);
-        else if (wire === 1) cursor.offset += 8;
+        else if (wire === 1) {
+            cursor.offset += 8;
+            if (cursor.offset > buffer.length) throw new Error('Truncated GTFS-RT protobuf field');
+        }
         else if (wire === 2) {
             const length = readVarint(buffer, cursor), end = cursor.offset + length;
             if (end > buffer.length) throw new Error('Truncated GTFS-RT protobuf field');
             if (field === fieldNumber) result.push(buffer.subarray(cursor.offset, end));
             cursor.offset = end;
-        } else if (wire === 5) cursor.offset += 4;
+        } else if (wire === 5) {
+            cursor.offset += 4;
+            if (cursor.offset > buffer.length) throw new Error('Truncated GTFS-RT protobuf field');
+        }
         else throw new Error(`Unsupported GTFS-RT protobuf wire type ${wire}`);
     }
     return result;
@@ -130,11 +140,18 @@ function protobufScalar(buffer: Buffer, fieldNumber: number): number | null {
         if (wire === 0) {
             const value = readVarint(buffer, cursor);
             if (field === fieldNumber) return value;
-        } else if (wire === 1) cursor.offset += 8;
+        } else if (wire === 1) {
+            cursor.offset += 8;
+            if (cursor.offset > buffer.length) throw new Error('Truncated GTFS-RT protobuf field');
+        }
         else if (wire === 2) {
             const length = readVarint(buffer, cursor);
             cursor.offset += length;
-        } else if (wire === 5) cursor.offset += 4;
+            if (cursor.offset > buffer.length) throw new Error('Truncated GTFS-RT protobuf field');
+        } else if (wire === 5) {
+            cursor.offset += 4;
+            if (cursor.offset > buffer.length) throw new Error('Truncated GTFS-RT protobuf field');
+        }
         else throw new Error(`Unsupported GTFS-RT protobuf wire type ${wire}`);
     }
     return null;
@@ -158,13 +175,23 @@ export function parseGtfsRtMultiCarriageDetails(
         const id = protobufString(entity, 1);
         const vehicle = protobufMessages(entity, 4)[0];
         if (!id || !vehicle) continue;
-        const carriages = protobufMessages(vehicle, 11).map((carriage) => ({
-            id: protobufString(carriage, 1),
-            label: protobufString(carriage, 2),
-            occupancy_status: protobufScalar(carriage, 3) as import('./types.js').OccupancyStatus | null,
-            occupancy_percentage: protobufScalar(carriage, 4),
-            carriage_sequence: protobufScalar(carriage, 5),
-        }));
+        const carriages = protobufMessages(vehicle, 11).map((carriage) => {
+            const occupancyStatus = protobufScalar(carriage, 3);
+            const occupancyPercentage = protobufScalar(carriage, 4);
+            const carriageSequence = protobufScalar(carriage, 5);
+            if ((occupancyStatus !== null && (occupancyStatus < 0 || occupancyStatus > 6)) ||
+                (occupancyPercentage !== null && (occupancyPercentage < 0 || occupancyPercentage > 100)) ||
+                (carriageSequence !== null && (!Number.isSafeInteger(carriageSequence) || carriageSequence > 0x7fffffff))) {
+                throw new Error('Invalid GTFS-RT carriage detail value');
+            }
+            return {
+                id: protobufString(carriage, 1),
+                label: protobufString(carriage, 2),
+                occupancy_status: occupancyStatus as import('./types.js').OccupancyStatus | null,
+                occupancy_percentage: occupancyPercentage,
+                carriage_sequence: carriageSequence,
+            };
+        });
         if (carriages.length) result.set(id, carriages);
     }
     return result;
@@ -186,6 +213,12 @@ export function extractZipEntry(archive: Buffer, requestedEntry: string): Buffer
     }
     if (eocd < 0) throw new Error('Downloaded file is not a valid ZIP archive (end record missing)');
 
+    const eocdCommentLength = archive.readUInt16LE(eocd + 20);
+    if (eocd + 22 + eocdCommentLength !== archive.length ||
+        archive.readUInt16LE(eocd + 4) !== 0 || archive.readUInt16LE(eocd + 6) !== 0) {
+        throw new Error('Downloaded ZIP has an invalid end record');
+    }
+
     const entryCount = archive.readUInt16LE(eocd + 10);
     const centralOffset = archive.readUInt32LE(eocd + 16);
     let offset = centralOffset;
@@ -199,6 +232,7 @@ export function extractZipEntry(archive: Buffer, requestedEntry: string): Buffer
         const extraLength = archive.readUInt16LE(offset + 30);
         const commentLength = archive.readUInt16LE(offset + 32);
         const localOffset = archive.readUInt32LE(offset + 42);
+        const expectedCrc = archive.readUInt32LE(offset + 16);
         const name = archive.subarray(offset + 46, offset + 46 + nameLength).toString('utf8').replace(/^\/+/, '');
 
         if (name === entry) {
@@ -210,10 +244,27 @@ export function extractZipEntry(archive: Buffer, requestedEntry: string): Buffer
             const compressed = archive.subarray(dataStart, dataStart + compressedSize);
             if (compressed.length !== compressedSize)
                 throw new Error(`ZIP archive entry '${entry}' is truncated`);
-            const result = compression === 0 ? Buffer.from(compressed) : compression === 8 ? inflateRawSync(compressed) : null;
+            const maxEntryBytes = 128 * 1024 * 1024;
+            if (uncompressedSize > maxEntryBytes ||
+                (uncompressedSize > 0 && (compressedSize === 0 || uncompressedSize / compressedSize > 200))) {
+                throw new Error(`ZIP archive entry '${entry}' exceeds extraction limits`);
+            }
+            let result: Buffer | null;
+            try {
+                result = compression === 0 ? Buffer.from(compressed) : compression === 8
+                    ? inflateRawSync(compressed, { maxOutputLength: maxEntryBytes }) : null;
+            } catch (error) {
+                throw new Error(`Failed to extract ZIP archive entry '${entry}': ${error instanceof Error ? error.message : String(error)}`);
+            }
             if (!result) throw new Error(`ZIP archive entry '${entry}' uses unsupported compression method ${compression}`);
             if (result.length !== uncompressedSize)
                 throw new Error(`ZIP archive entry '${entry}' has an invalid uncompressed size`);
+            let crc = 0xffffffff;
+            for (const byte of result) {
+                crc ^= byte;
+                for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+            }
+            if (((crc ^ 0xffffffff) >>> 0) !== expectedCrc) throw new Error(`ZIP archive entry '${entry}' failed its CRC check`);
             return result;
         }
         offset += 46 + nameLength + extraLength + commentLength;
@@ -221,11 +272,73 @@ export function extractZipEntry(archive: Buffer, requestedEntry: string): Buffer
     throw new Error(`ZIP archive entry '${entry}' was not found`);
 }
 
-const SNAPSHOT_VERSION = 2;
-const SNAPSHOT_MAGIC = "QDFS";
-
 /** Bound on concurrent static source acquisitions (cache I/O + download). */
 const STATIC_ACQUIRE_CONCURRENCY = 4;
+
+export function isNonPublicAddress(address: string): boolean {
+    if (net.isIPv4(address)) {
+        const [a, b] = address.split('.').map(Number);
+        return a === 0 || a === 10 || a === 127 || a >= 224 ||
+            (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+            (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+            (a === 198 && (b === 18 || b === 19));
+    }
+    if (net.isIPv6(address)) {
+        const normalized = address.toLowerCase().split('%')[0];
+        // IPv4-mapped (and other IPv4-embedded) dotted form, e.g.
+        // ::ffff:127.0.0.1: judge by the embedded IPv4 so private
+        // loopback/RFC1918 ranges cannot bypass the SSRF guard.
+        if (normalized.includes('.')) {
+            const embedded = normalized.slice(normalized.lastIndexOf(':') + 1);
+            if (net.isIPv4(embedded)) return isNonPublicAddress(embedded);
+            return true;
+        }
+        // Hex-form mapped ::ffff:0:0/96 without dots, e.g. ::ffff:7f00:1.
+        // Only decode when the prefix before :ffff: is all zeros.
+        const ffffPos = normalized.lastIndexOf(':ffff:');
+        if (ffffPos !== -1) {
+            const prefix = normalized.slice(0, ffffPos);
+            if (/^[0:]*$/.test(prefix)) {
+                const tail = normalized.slice(ffffPos + 6);
+                const parts = tail.split(':').filter((p) => p.length > 0);
+                if (parts.length >= 1 && parts.length <= 2 && parts.every((p) => /^[0-9a-f]{1,4}$/.test(p))) {
+                    const words = parts.map((p) => parseInt(p, 16));
+                    const bytes = words.length === 2
+                        ? [(words[0] >> 8) & 255, words[0] & 255, (words[1] >> 8) & 255, words[1] & 255]
+                        : [0, 0, (words[0] >> 8) & 255, words[0] & 255];
+                    return isNonPublicAddress(bytes.join('.'));
+                }
+            }
+        }
+        return normalized === '::' || normalized === '::1' || normalized.startsWith('fc') ||
+            normalized.startsWith('fd') || /^fe[89ab]/.test(normalized) || normalized.startsWith('ff');
+    }
+    return true;
+}
+
+async function redirectHeaders(
+    from: URL,
+    to: URL,
+    headers?: Record<string, string>,
+    existingAddresses?: dns.LookupAddress[],
+): Promise<{ headers: Record<string, string> | undefined; addresses?: dns.LookupAddress[] }> {
+    if (from.protocol === 'https:' && to.protocol !== 'https:') {
+        throw new Error(`Refusing insecure redirect from ${from.origin} to ${to.origin}`);
+    }
+    let addresses: dns.LookupAddress[] | undefined = from.origin === to.origin ? existingAddresses : undefined;
+    if (from.origin !== to.origin) {
+        addresses = await dns.promises.lookup(to.hostname, { all: true });
+        if (addresses.length === 0 || addresses.some(({ address }) => isNonPublicAddress(address))) {
+            throw new Error(`Refusing redirect to non-public address ${to.hostname}`);
+        }
+    }
+    return {
+        headers: from.origin === to.origin ? headers : Object.fromEntries(
+            Object.entries(headers ?? {}).filter(([name]) => !['authorization', 'cookie', 'proxy-authorization'].includes(name.toLowerCase())),
+        ),
+        addresses,
+    };
+}
 
 /** Run `fn` over `items` with at most `limit` tasks in flight, preserving order. */
 async function mapWithConcurrency<T, R>(
@@ -248,6 +361,48 @@ async function mapWithConcurrency<T, R>(
     return results;
 }
 
+/** Canonical header serialization so key order does not fragment the static cache. */
+function canonicalHeaders(headers?: Record<string, string>): string {
+    if (!headers) return '{}';
+    const sortedKeys = Object.keys(headers).sort();
+    return JSON.stringify(Object.fromEntries(sortedKeys.map((key) => [key, headers[key]])));
+}
+
+function assertHttpUrl(value: string, label: string): void {
+    let parsed: URL;
+    try {
+        parsed = new URL(value);
+    } catch {
+        throw new Error(`${label} must be a valid URL, received '${value}'`);
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error(`${label} must use http(s), received '${value}'`);
+    }
+}
+
+/**
+ * Validate `fallbackUrls` without changing the transport contract: same
+ * headers are sent to every URL, fallbacks are tried in order, duplicates of
+ * the primary URL are rejected so a misconfiguration cannot mask a failure.
+ */
+function validateFeedFallbacks(config: GTFSFeedConfig): string[] {
+    assertHttpUrl(config.url, `GTFS feed '${config.id}' url`);
+    const fallbacks = config.fallbackUrls ?? [];
+    if (!Array.isArray(fallbacks)) throw new Error(`GTFS feed '${config.id}' fallbackUrls must be an array`);
+    const seen = new Set<string>();
+    for (const fallback of fallbacks) {
+        if (typeof fallback !== 'string' || !fallback.trim()) {
+            throw new Error(`GTFS feed '${config.id}' fallbackUrls must be non-empty URLs`);
+        }
+        assertHttpUrl(fallback, `GTFS feed '${config.id}' fallback`);
+        if (fallback === config.url || seen.has(fallback)) {
+            throw new Error(`GTFS feed '${config.id}' has a duplicate fallback URL '${fallback}'`);
+        }
+        seen.add(fallback);
+    }
+    return [...seen];
+}
+
 export class GTFS {
     private addonInstance: any;
     private logger?: (msg: string) => void;
@@ -263,6 +418,8 @@ export class GTFS {
 	private cacheMaxAgeMs: number;
 	private staleIfError: boolean;
 	private requestTimeoutMs: number;
+	private realtimeTimeoutMs: number;
+    private maxDownloadBytes: number;
     private serviceDatesCache: Map<string, string[]> | null = null;
     private lastChangedTripIds: RealtimeChangedTrip[] = [];
     private lastRealtimeRevision: number = 0;
@@ -289,6 +446,14 @@ export class GTFS {
 		this.cacheMaxAgeMs = options?.cacheMaxAgeMs ?? 24 * 60 * 60 * 1000;
 		this.staleIfError = options?.staleIfError ?? true;
 		this.requestTimeoutMs = options?.requestTimeoutMs ?? 30_000;
+		this.realtimeTimeoutMs = options?.realtimeTimeoutMs ?? this.requestTimeoutMs;
+        this.maxDownloadBytes = options?.maxDownloadBytes ?? 256 * 1024 * 1024;
+		if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
+			throw new Error('requestTimeoutMs must be a positive finite number');
+		}
+		if (!Number.isFinite(this.realtimeTimeoutMs) || this.realtimeTimeoutMs <= 0) {
+			throw new Error('realtimeTimeoutMs must be a positive finite number');
+		}
     }
 
     private showProgress(task: string, current: number, total: number, speed: number, eta: number) {
@@ -300,6 +465,10 @@ export class GTFS {
             return;
         }
         this.lastProgressByTask.set(task, now);
+        if (this.lastProgressByTask.size > 256) {
+            const oldest = this.lastProgressByTask.keys().next().value;
+            if (oldest !== undefined) this.lastProgressByTask.delete(oldest);
+        }
         this.lastProgressUpdate = now;
 
         const percent = total > 0 ? (current / total) * 100 : 0;
@@ -325,52 +494,43 @@ export class GTFS {
         }
     }
 
-    private computeSnapshotKey(buffers: Buffer[], feedIds: string[], effectiveFiles: string[]): string {
-        const hashes = buffers.map(b => crypto.createHash('sha256').update(b).digest('hex'));
-        const sortedFiles = [...effectiveFiles].sort();
-        const arch = `${os.arch()}-${os.endianness()}-${process.versions.node}`;
-        const keyInput = JSON.stringify({
-            v: SNAPSHOT_VERSION,
-            feedIds,
-            hashes,
-            mergeStrategy: this.mergeStrategy,
-            files: sortedFiles,
-            arch,
-        });
-        return crypto.createHash('sha256').update(keyInput).digest('hex');
-    }
-
-    private compiledSnapshotPath(key: string): string {
-        const base = this.cacheDir || './cache';
-        return path.join(base, 'compiled', `${key}.bin`);
-    }
-
-    private tryLoadCompiledSnapshot(key: string): boolean {
-        const p = this.compiledSnapshotPath(key);
-        if (!fs.existsSync(p)) return false;
-        try {
-            const stat = fs.statSync(p);
-            if (stat.size < 32) return false;
-            this.addonInstance.loadCompiledSnapshot(p);
-            this.serviceDatesCache = null;
-            if (this.logger) this.logger(`Loaded compiled snapshot ${p}`);
-            return true;
-        } catch (e) {
-            if (this.logger) this.logger(`Compiled snapshot invalid, fallback to parse: ${e instanceof Error ? e.message : String(e)}`);
-            try { fs.unlinkSync(p); } catch {}
-            return false;
+    private realtimeDeadlineMs(overrideMs?: number): number {
+        const deadline = overrideMs ?? this.realtimeTimeoutMs;
+        if (!Number.isFinite(deadline) || deadline <= 0) {
+            throw new Error('realtime timeout must be a positive finite number');
         }
+        return deadline;
     }
 
-    private saveCompiledSnapshotByKey(key: string): void {
-        if (!this.cache) return;
-        const p = this.compiledSnapshotPath(key);
-        try {
-            this.addonInstance.saveCompiledSnapshot(p);
-            if (this.logger) this.logger(`Saved compiled snapshot ${p}`);
-        } catch (e) {
-            if (this.logger) this.logger(`Failed to save compiled snapshot: ${e instanceof Error ? e.message : String(e)}`);
+    /**
+     * Try the primary URL then each fallback in order, using the same headers
+     * and progress task. Only the last failure is thrown so stale-cache
+     * handling sees the most relevant error.
+     */
+    private async downloadWithFallbacks(
+        primaryUrl: string,
+        fallbackUrls: string[],
+        task: string,
+        showProgressBar: boolean,
+        headers?: Record<string, string>,
+    ): Promise<{ buffer: Buffer; url: string; fallbackIndex: number }> {
+        let lastError: unknown = null;
+        const urls = [primaryUrl, ...fallbackUrls];
+        for (let index = 0; index < urls.length; index++) {
+            try {
+                const buffer = await this.download(urls[index], task, showProgressBar, headers);
+                if (index > 0 && this.logger) {
+                    this.logger(`Using fallback URL ${index}/${urls.length - 1} for ${task}`);
+                }
+                return { buffer, url: urls[index], fallbackIndex: index };
+            } catch (error) {
+                lastError = error;
+                if (index + 1 < urls.length && this.logger) {
+                    this.logger(`Primary download failed, trying fallback ${index + 1}/${urls.length - 1}: ${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
         }
+        throw lastError instanceof Error ? lastError : new Error(String(lastError));
     }
 
     async loadStatic(feeds: GTFSFeedConfig[] | GTFSFeedConfig): Promise<GTFSStaticLoadResult[]> {
@@ -378,14 +538,18 @@ export class GTFS {
 		if (feedList.length === 0) throw new Error('At least one GTFS feed is required');
 		if (feedList.some((feed) => !feed.id?.trim())) throw new Error('GTFS feed IDs must be non-empty');
 		if (new Set(feedList.map((feed) => feed.id)).size !== feedList.length) throw new Error('GTFS feed IDs must be unique');
+		for (const feed of feedList) validateFeedFallbacks(feed);
 		// Do not destroy current snapshot before replacement is validated; clear JS caches only
 		// this.clearStatic() removed for immutable snapshot semantics
         const cacheDir = this.cacheDir || './cache';
         // Deduplicate by transport-level source BEFORE starting tasks so feeds sharing
         // one archive URL (e.g. vic-vline/vic-metro with different archiveEntry)
         // trigger exactly one cache read / download. archiveEntry extraction stays per feed.
+        // Headers are canonicalized (sorted keys) so key order does not fragment the cache.
+        // Fallback URLs do not fragment the cache key; feeds sharing a primary URL share
+        // one download and try the union of their fallbacks in feed order.
         const sourceKeyOf = (config: GTFSFeedConfig): string =>
-            `${config.url}|${JSON.stringify(config.headers ?? {})}`;
+            `${config.url}|${canonicalHeaders(config.headers)}`;
         const sourceKeys = feedList.map(sourceKeyOf);
         const indicesBySource = new Map<string, number[]>();
         const uniqueSourceKeys: string[] = [];
@@ -402,6 +566,7 @@ export class GTFS {
             sourceKey: string;
             url: string;
             headers?: Record<string, string>;
+            fallbackUrls: string[];
             cachePath: string;
             legacyPaths: string[];
             feedIds: string[];
@@ -423,10 +588,19 @@ export class GTFS {
                     }
                 }
             }
+            // Union fallbacks in feed order so sharing feeds keep one download
+            // while still trying every configured mirror when the primary fails.
+            const fallbackUrls: string[] = [];
+            for (const feedIndex of indices) {
+                for (const fallback of feedList[feedIndex].fallbackUrls ?? []) {
+                    if (!fallbackUrls.includes(fallback)) fallbackUrls.push(fallback);
+                }
+            }
             return {
                 sourceKey,
                 url: representative.url,
                 headers: representative.headers,
+                fallbackUrls,
                 cachePath,
                 legacyPaths,
                 feedIds: indices.map((feedIndex) => feedList[feedIndex].id),
@@ -435,34 +609,42 @@ export class GTFS {
         type AcquiredSource = { buffer: Buffer; source: GTFSStaticLoadResult["source"] };
         const acquireSource = async (spec: SourceSpec): Promise<AcquiredSource> => {
             let staleBuffer: Buffer | null = null;
-            let staleAgeMs = Number.POSITIVE_INFINITY;
-            let readablePath: string | null = null;
+            let staleMtimeMs = 0;
+            let stalePath: string | null = null;
             if (this.cache && spec.cachePath) {
-                // Single successful read per unique source: unified path first,
-                // then per-feed legacy paths (distinct archiveEntry values) in feed order.
-                const candidates = [spec.cachePath, ...spec.legacyPaths];
-                for (const candidate of candidates) {
+                // Priority order is deterministic: unified path first, then
+                // legacy per-feed paths in feed order. The first fresh entry
+                // wins; otherwise the newest stale entry is kept for
+                // stale-if-error. Empty or oversized files are skipped so a
+                // truncated write can never poison the cache.
+                const ordered = [spec.cachePath, ...spec.legacyPaths];
+                for (const candidate of ordered) {
+                    let stats: import('fs').Stats;
                     try {
-                        const stats = await fsp.stat(candidate);
-                        try {
-                            staleBuffer = await fsp.readFile(candidate);
-                        } catch (e) {
-                            if (this.logger) this.logger(`Failed to read cache: ${e}`);
-                            continue;
-                        }
-                        staleAgeMs = Date.now() - stats.mtimeMs;
-                        readablePath = candidate;
-                        break;
-                    } catch {
+                        stats = await fsp.stat(candidate);
+                    } catch { continue; }
+                    if (!stats.isFile() || stats.size === 0 || stats.size > this.maxDownloadBytes) continue;
+                    let buffer: Buffer;
+                    try {
+                        buffer = await fsp.readFile(candidate);
+                    } catch (e) {
+                        if (this.logger) this.logger(`Failed to read cache: ${e}`);
                         continue;
                     }
-                }
-                if (staleBuffer && readablePath && staleAgeMs < this.cacheMaxAgeMs) {
-                    if (this.logger) this.logger(`Loading from cache: ${readablePath}`);
-                    return { buffer: staleBuffer, source: "fresh-cache" };
+                    if (buffer.length === 0 || buffer.length > this.maxDownloadBytes) continue;
+                    const ageMs = Date.now() - stats.mtimeMs;
+                    if (ageMs < this.cacheMaxAgeMs) {
+                        if (this.logger) this.logger(`Loading from cache: ${candidate}`);
+                        return { buffer, source: "fresh-cache" };
+                    }
+                    if (!staleBuffer || stats.mtimeMs > staleMtimeMs) {
+                        staleBuffer = buffer;
+                        staleMtimeMs = stats.mtimeMs;
+                        stalePath = candidate;
+                    }
                 }
                 if (staleBuffer) {
-                    if (this.logger) this.logger(`Cache expired for ${spec.url}, redownloading...`);
+                    if (this.logger) this.logger(`Cache expired for ${spec.url} (${stalePath}), redownloading...`);
                 }
             }
 
@@ -487,7 +669,7 @@ export class GTFS {
                     this.lastProgressByTask.delete(`Connecting to GTFS (${feedId})`);
                 }
                 this.showProgress(connectTask, 0, 0, 0, 0);
-                const buffer = await this.download(spec.url, task, true, spec.headers);
+                const { buffer } = await this.downloadWithFallbacks(spec.url, spec.fallbackUrls, task, true, spec.headers);
                 return { buffer, source: "network" };
             } catch (error) {
                 if (!this.staleIfError || !staleBuffer) throw error;
@@ -532,31 +714,22 @@ export class GTFS {
         }
 
         const feedIds = feedList.map((feed) => feed.id);
-        // Compute effective files for snapshot key (same logic as loadFromBuffers)
-        const ALL_FILES_SNAP = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','transfers.txt','shapes.txt','feed_info.txt','occupancies.txt'];
-        let effectiveForKey: string[] = this.filesToLoad ? [...this.filesToLoad] : [];
-        if (this.skipStopTimes && effectiveForKey.length === 0) {
-            effectiveForKey = ALL_FILES_SNAP.filter(f => f !== 'stop_times.txt');
-        } else if (this.skipStopTimes) {
-            effectiveForKey = effectiveForKey.filter(f => f !== 'stop_times.txt');
-        }
-        const key = this.computeSnapshotKey(buffers, feedIds, effectiveForKey);
-        // Compiled warm path disabled for now (inefficient for large feeds); fallback to normal parse
-        // let usedCompiled = false;
-        // if (this.cache) usedCompiled = this.tryLoadCompiledSnapshot(key);
-        // if (!usedCompiled) {
-            await this.loadFromBuffers(buffers, feedIds);
-        //    if (this.cache) this.saveCompiledSnapshotByKey(key);
-        // }
+        await this.loadFromBuffers(buffers, feedIds);
 		// Only replace durable caches after every downloaded ZIP parsed successfully.
+		// Temp files live beside the final cache entry (same filesystem for an
+		// atomic rename) and use a `.tmp.<pid>.<uuid>` suffix so crashed
+		// writers are easy to identify and never mistaken for a cache entry.
+		// Only the failing writer removes its own temp file; a successful
+		// rename leaves no temp behind.
 		for (const { cacheDir, cachePath, buffer } of pendingCacheWrites) {
-			const temporaryPath = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
+			const temporaryPath = `${cachePath}.tmp.${process.pid}.${crypto.randomUUID()}`;
 			try {
 				await fsp.mkdir(cacheDir, { recursive: true });
 				await fsp.writeFile(temporaryPath, buffer);
 				await fsp.rename(temporaryPath, cachePath);
-			} finally {
+			} catch (error) {
 				try { await fsp.unlink(temporaryPath); } catch {}
+				throw error;
 			}
 		}
 		return results;
@@ -584,7 +757,7 @@ export class GTFS {
             this.showProgress(task, current, total, speed, eta);
         };
 
-        const ALL_FILES = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','transfers.txt','shapes.txt','feed_info.txt','occupancies.txt'];
+        const ALL_FILES = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','transfers.txt','frequencies.txt','shapes.txt','feed_info.txt','occupancies.txt'];
         let effectiveFiles: string[] = this.filesToLoad ? [...this.filesToLoad] : [];
         if (this.skipStopTimes && effectiveFiles.length === 0) {
             effectiveFiles = ALL_FILES.filter(f => f !== 'stop_times.txt');
@@ -592,11 +765,6 @@ export class GTFS {
             effectiveFiles = effectiveFiles.filter(f => f !== 'stop_times.txt');
         }
 
-        const ALL_FILES_KEY = ['agency.txt','routes.txt','trips.txt','stops.txt','stop_times.txt','calendar.txt','calendar_dates.txt','transfers.txt','shapes.txt','feed_info.txt','occupancies.txt'];
-        let effectiveForCacheKey = effectiveFiles.length ? [...effectiveFiles] : [];
-        // effectiveFiles may be empty meaning all; normalize for key
-        if (effectiveForCacheKey.length === 0) effectiveForCacheKey = [];
-        const keyForBuffer = this.computeSnapshotKey(buffers, feedIds, effectiveForCacheKey.length ? effectiveForCacheKey : ALL_FILES_KEY);
         // Try compiled warm path if cache enabled and caller is loadFromBuffers directly (e.g., tests)
         // We do not automatically try here to avoid double path; loadStatic already tried
         return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge, feedIds, effectiveFiles)
@@ -609,11 +777,38 @@ export class GTFS {
     getSnapshotRevision(): { realtime_revision: number; stop_time_count: number; trip_count: number } {
         return this.addonInstance.getSnapshotRevision();
     }
-    getStaticSnapshotInfo(): { stop_time_count: number; realtime_revision: number } {
+    getStaticSnapshotInfo(): { stop_time_count: number; trip_count: number; realtime_revision: number } {
         return this.addonInstance.getStaticSnapshotInfo();
     }
-    saveCompiledSnapshot(path: string): void { return this.addonInstance.saveCompiledSnapshot(path); }
-    loadCompiledSnapshot(path: string): void { return this.addonInstance.loadCompiledSnapshot(path); }
+    saveCompiledSnapshot(filePath: string): void {
+        if (!filePath?.trim()) throw new Error('Compiled snapshot path must be non-empty');
+        return this.addonInstance.saveCompiledSnapshot(filePath);
+    }
+    loadCompiledSnapshot(filePath: string): void {
+        if (!filePath?.trim()) throw new Error('Compiled snapshot path must be non-empty');
+        // Fail fast on a missing/truncated file so the live snapshot is never
+        // touched. The native loader stages into a new snapshot and only
+        // publishes after validation, but a JS-side pre-check keeps the error
+        // local and avoids clearing JS caches on failure.
+        try {
+            const size = fs.statSync(filePath).size;
+            if (size < 32) throw new Error(`Compiled snapshot '${filePath}' is too small (${size} bytes)`);
+        } catch (error) {
+            if (error instanceof Error && /too small/.test(error.message)) throw error;
+            throw new Error(`Cannot read compiled snapshot '${filePath}': ${error instanceof Error ? error.message : String(error)}`);
+        }
+        const previousRevision = this.lastRealtimeRevision;
+        this.addonInstance.loadCompiledSnapshot(filePath);
+        // Native load preserves the realtime overlay; keep the JS aggregate
+        // instead of destructively clearing it. Only derived static caches
+        // are invalidated.
+        this.serviceDatesCache = null;
+        try {
+            this.lastRealtimeRevision = this.addonInstance.getSnapshotRevision().realtime_revision ?? previousRevision;
+        } catch {
+            this.lastRealtimeRevision = previousRevision;
+        }
+    }
 
     getRoutes(filter?: Partial<Route>): Route[] {
         return this.addonInstance.getRoutes(filter);
@@ -642,6 +837,8 @@ export class GTFS {
     clearStatic(): void {
         this.addonInstance.clearStatic();
         this.serviceDatesCache = null;
+        this.lastChangedTripIds = [];
+        this.lastRealtimeRevision = this.addonInstance.getSnapshotRevision().realtime_revision ?? 0;
     }
 
     getStaticOccupancies(query: StaticOccupancyQuery): StaticOccupancy[] {
@@ -739,6 +936,10 @@ export class GTFS {
         return this.addonInstance.getTransfers(filter || {});
     }
 
+    getFrequencies(filter?: { trip_id?: string; feed_id?: string }): Frequency[] {
+        return this.addonInstance.getFrequencies(filter || {});
+    }
+
     getShapes(filter?: Partial<Shape>): Shape[] {
         return this.addonInstance.getShapes(filter);
     }
@@ -752,7 +953,7 @@ export class GTFS {
     }
 
     getServiceDates(service: QualifiedEntityId): string[] {
-        return this.getServiceDatesMap().get(this.qualifiedKey(service.feedId, service.localId)) ?? [];
+        return [...(this.getServiceDatesMap().get(this.qualifiedKey(service.feedId, service.localId)) ?? [])];
     }
 
     getServiceDatesByTrip(trip: QualifiedEntityId): string[] {
@@ -787,16 +988,44 @@ export class GTFS {
      * Fetch phase: download every source concurrently without touching the
      * snapshot. Results keep `sources` order. Protobuf decoding still happens
      * inside the native commit; only transport is overlapped here.
+     * The whole aggregate is bounded by a total deadline (`timeoutMs` override
+     * or `realtimeTimeoutMs`/`requestTimeoutMs`); per-request timeouts still
+     * apply to each download. Fallback URLs are tried in order per source.
      */
-    async fetchRealtimeSources(sources: GTFSRealtimeFeedConfig[]): Promise<FetchedRealtimeSource[]> {
-		return Promise.all(sources.map(async (source) => {
-			try {
-				const data = await this.download(source.url, `Downloading ${source.kind}`, false, source.headers);
-				return { source, ok: true as const, data };
-			} catch (error) {
-				return { source, ok: false as const, error: error instanceof Error ? error.message : String(error) };
-			}
-		}));
+    async fetchRealtimeSources(sources: GTFSRealtimeFeedConfig[], options?: RealtimeFetchOptions): Promise<FetchedRealtimeSource[]> {
+        if (sources.length === 0) return [];
+        for (const source of sources) validateFeedFallbacks(source);
+        const deadlineMs = this.realtimeDeadlineMs(options?.timeoutMs);
+        const fetches = Promise.all(sources.map(async (source) => {
+            try {
+                const { buffer } = await this.downloadWithFallbacks(
+                    source.url,
+                    source.fallbackUrls ?? [],
+                    `Downloading ${source.kind}`,
+                    false,
+                    source.headers,
+                );
+                return { source, ok: true as const, data: buffer };
+            } catch (error) {
+                return { source, ok: false as const, error: error instanceof Error ? error.message : String(error) };
+            }
+        }));
+        let timer: NodeJS.Timeout | undefined;
+        const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Realtime fetch timed out after ${deadlineMs}ms`)), deadlineMs);
+            timer.unref?.();
+        });
+        try {
+            return await Promise.race([fetches, timeout]);
+        } catch (error) {
+            // The aggregate deadline fired; background fetches keep running to
+            // completion but their results are ignored. Attach a handler so a
+            // late rejection cannot become unhandled.
+            fetches.catch(() => {});
+            throw error;
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
     }
 
     /**
@@ -826,8 +1055,8 @@ export class GTFS {
 		return results;
     }
 
-    async updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[]): Promise<GTFSRealtimeLoadResult[]> {
-		return this.applyRealtimePayloads(await this.fetchRealtimeSources(sources));
+    async updateRealtimeFromUrl(sources: GTFSRealtimeFeedConfig[], options?: RealtimeFetchOptions): Promise<GTFSRealtimeLoadResult[]> {
+		return this.applyRealtimePayloads(await this.fetchRealtimeSources(sources, options));
     }
 
     getRealtimeTripUpdates(filter?: RealtimeFilter): RealtimeTripUpdate[] {
@@ -844,6 +1073,8 @@ export class GTFS {
 
     clearRealtime(filter: { targetFeedId?: string; sourceId?: string } = {}): void {
         this.addonInstance.clearRealtime(filter.targetFeedId || "", filter.sourceId || "");
+		this.lastChangedTripIds = [];
+		this.lastRealtimeRevision = this.addonInstance.getSnapshotRevision().realtime_revision ?? 0;
 	}
 
     private download(
@@ -853,6 +1084,7 @@ export class GTFS {
         headers?: Record<string, string>,
         redirects: number = 0,
         connectionAttempt: number = 0,
+        resolvedAddresses?: dns.LookupAddress[],
     ): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             let connectionTimer: NodeJS.Timeout | undefined;
@@ -864,9 +1096,14 @@ export class GTFS {
                 if (res.statusCode !== 200) {
 					if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
 						if (redirects >= 5) { reject(new Error(`Too many redirects downloading ${url}`)); return; }
+                        const currentUrl = new URL(url);
+                        const redirectUrl = new URL(res.headers.location as string, currentUrl);
                         if (this.logger) this.logger(`Redirected to ${res.headers.location}`);
 						res.resume();
-						this.download(new URL(res.headers.location as string, url).toString(), taskName, showProgressBar, headers, redirects + 1, connectionAttempt).then(resolve).catch(reject);
+						redirectHeaders(currentUrl, redirectUrl, headers, resolvedAddresses)
+                            .then((redirect) => this.download(redirectUrl.toString(), taskName, showProgressBar, redirect.headers, redirects + 1, connectionAttempt, redirect.addresses))
+                            .then(resolve)
+                            .catch(reject);
                         return;
                     }
 					res.resume();
@@ -875,6 +1112,11 @@ export class GTFS {
                 }
 
                 const total = parseInt(res.headers['content-length'] || '0', 10);
+                if (Number.isFinite(total) && total > this.maxDownloadBytes) {
+                    res.destroy();
+                    reject(new Error(`Download exceeds ${this.maxDownloadBytes} byte limit`));
+                    return;
+                }
                 let current = 0;
                 const data: Buffer[] = [];
                 const startTime = Date.now();
@@ -883,8 +1125,12 @@ export class GTFS {
 				this.showProgress(taskName, 0, total, 0, 0);
 
                 res.on('data', (chunk: Buffer) => {
-                    data.push(chunk);
                     current += chunk.length;
+                    if (current > this.maxDownloadBytes) {
+                        res.destroy(new Error(`Download exceeds ${this.maxDownloadBytes} byte limit`));
+                        return;
+                    }
+                    data.push(chunk);
 
                     if (showProgressBar) {
                         const now = Date.now();
@@ -914,12 +1160,22 @@ export class GTFS {
             };
 
             try {
-                const client = url.startsWith('https') ? https : http;
+                const parsedUrl = new URL(url);
+                if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+                    throw new Error(`Unsupported download protocol ${parsedUrl.protocol}`);
+                }
+                const client = parsedUrl.protocol === 'https:' ? https : http;
 				const req = client.get(url, {
 					headers,
-					// These feeds all publish IPv4 endpoints. Avoid Node waiting on an
-					// unroutable IPv6 result before trying the usable address.
-					family: 4,
+                    lookup: resolvedAddresses ? ((_hostname: string, options: any, callback: any) => {
+                        if (options?.all) {
+                            callback(null, resolvedAddresses);
+                            return;
+                        }
+                        const requestedFamily = typeof options === 'number' ? options : options?.family;
+                        const selected = resolvedAddresses.find((entry) => !requestedFamily || entry.family === requestedFamily) ?? resolvedAddresses[0];
+                        callback(null, selected.address, selected.family);
+                    }) : undefined,
 				}, onResponse);
 				connectionTimer = setTimeout(
 					() => req.destroy(new Error(`Timed out connecting to ${url}`)),
@@ -928,7 +1184,7 @@ export class GTFS {
 				req.on('error', (err: Error) => {
 					if (connectionTimer) clearTimeout(connectionTimer);
 					if (!receivedResponse && connectionAttempt < 2) {
-						this.download(url, taskName, showProgressBar, headers, redirects, connectionAttempt + 1)
+						this.download(url, taskName, showProgressBar, headers, redirects, connectionAttempt + 1, resolvedAddresses)
 							.then(resolve)
 							.catch(reject);
 						return;

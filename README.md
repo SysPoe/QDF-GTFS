@@ -101,12 +101,19 @@ const alerts = gtfs.getRealtimeAlerts();
 - `cacheMaxAgeMs`: Maximum age for a fresh static-feed cache (default: 24 hours).
 - `staleIfError`: Use an expired static cache when its origin is unavailable (default: `true`).
 - `requestTimeoutMs`: Network request timeout (default: 30 seconds).
+- `realtimeTimeoutMs`: Total deadline for one realtime aggregate fetch (defaults to `requestTimeoutMs`).
+- `maxDownloadBytes`: Maximum accepted response body size (default: 256 MiB).
+
+Static feeds also accept `fallbackUrls`: ordered mirrors for the same archive.
+The primary `url` is tried first with the same `headers`; each fallback is
+tried in order only when earlier URLs fail.
 
 ### Main Methods
 
 - `loadStatic(feeds)`: Download, cache, and load one or more feed-qualified GTFS ZIPs.
 - `loadFromPath(paths, feedIds)`: Load one or more GTFS ZIPs from the local filesystem. Supply one unique, non-empty feed ID per ZIP.
-- `updateRealtimeFromUrl(sources)`: Download and independently update feed-qualified realtime sources.
+- `updateRealtimeFromUrl(sources, options?)`: Download and independently update feed-qualified realtime sources. `options.timeoutMs` overrides the aggregate deadline for one call.
+- `fetchRealtimeSources(sources, options?)` / `applyRealtimePayloads(fetched)`: Split fetch/commit phases; fetch is bounded by the same total deadline.
 - `updateRealtime(input)`: Parse a raw realtime Buffer with explicit `sourceId`, `targetFeedId`, and `kind`.
 
 ### Data Getters

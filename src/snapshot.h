@@ -2,14 +2,19 @@
 #include "GTFS.h"
 #include <string>
 
+// Canonical snapshot declarations. The implemented binary format lives in
+// src/snapshot.cpp (GTFSData::saveCompiledSnapshot/loadCompiledSnapshot) and
+// GTFSData::snapshotVersion(). This header previously declared version 2,
+// omitted frequencyCount, and exposed free functions that no longer exist.
+// It now mirrors the implemented format (version 4) and only re-exports the
+// live entry points; nothing in the build includes this header, so it is
+// documentation/compatibility only.
+
 namespace gtfs {
 
-// Snapshot binary version. Increment when logical schema changes.
-constexpr uint32_t SNAPSHOT_VERSION = 2;
+// Snapshot binary version. Must match GTFSData::snapshotVersion().
+constexpr uint32_t SNAPSHOT_VERSION = 4;
 constexpr uint32_t SNAPSHOT_MAGIC = 0x51444653; // 'QDFS'
-constexpr uint32_t SNAPSHOT_MIN_VERSION = 2;
-
-// Architecture hash is computed from arch + endianness at runtime; stored in header for rejection.
 
 struct SnapshotHeader {
     uint32_t magic = SNAPSHOT_MAGIC;
@@ -29,12 +34,10 @@ struct SnapshotHeader {
     uint32_t shapeCount = 0;
     uint32_t feedInfoCount = 0;
     uint32_t staticOccupancyCount = 0;
+    uint32_t frequencyCount = 0;
     uint32_t checksum = 0; // crc32 of rest of file
 };
 
-bool saveCompiledSnapshot(const GTFSData& data, const std::string& path, const std::string& contentKey, std::string& error);
-bool loadCompiledSnapshot(GTFSData& data, const std::string& path, const std::string& expectedContentKey, std::string& error);
-uint32_t computeArchHash();
-std::string computeSnapshotContentKey(const std::vector<std::string>& feedIds, const std::vector<std::string>& feedHashes, int mergeStrategy, const std::vector<std::string>& filesToLoad, uint32_t snapshotVersion);
+static_assert(SNAPSHOT_VERSION == 4, "snapshot.h version must match GTFSData::snapshotVersion()");
 
 }

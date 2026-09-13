@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
+import { createServer, type Server } from "node:http";
+import { mkdirSync } from "node:fs";
 import { extractZipEntry, GTFS, GTFSMergeStrategy, type Shape } from "./index.js";
 
 const crcTable = Array.from({ length: 256 }, (_, value) => {
@@ -192,6 +194,9 @@ function makeCollisionFeed(name: string): Buffer {
 			"from_stop_id,to_stop_id,from_route_id,to_route_id,from_trip_id,to_trip_id,transfer_type,min_transfer_time\n" +
 			"shared-stop,shared-stop,shared-route,shared-route,shared-trip,next-trip,4,\n" +
 			"shared-stop,shared-stop,shared-route,shared-route,next-trip,shared-trip,5,\n",
+		"frequencies.txt":
+			"trip_id,start_time,end_time,headway_secs,exact_times\n" +
+			"shared-trip,06:00:00,09:00:00,600,1\n",
 		"shapes.txt":
 			shapesHeader + "shared-shape,-27.0,153.0,1,0\n",
 	});
@@ -652,6 +657,10 @@ function testNestedArchiveExtraction() {
 	assert.deepEqual(extractZipEntry(binaryOuter, "1/google_transit.zip"), inner);
 	assert.throws(() => extractZipEntry(binaryOuter, "2/google_transit.zip"), /was not found/);
 	assert.throws(() => extractZipEntry(Buffer.from("not a zip"), "1/google_transit.zip"), /not a valid ZIP/);
+	assert.throws(() => extractZipEntry(Buffer.concat([binaryOuter, Buffer.from("trailing")]), "1/google_transit.zip"), /invalid end record/);
+	const corrupt = Buffer.from(binaryOuter);
+	corrupt[30 + Buffer.byteLength("1/google_transit.zip")] ^= 0xff;
+	assert.throws(() => extractZipEntry(corrupt, "1/google_transit.zip"), /CRC check/);
 }
 
 
@@ -747,6 +756,440 @@ async function testSharedCalendarExpansionKeepsServiceExceptionsSeparate() {
 	assert.deepEqual(gtfs.getServiceDates({ feedId: "feed-a", localId: "shared" }), []);
 }
 
+function makeDifferentialTripUpdateFeed(updateId: string, tripId: string): Buffer {
+	const header = Buffer.concat([protobufField(1, "2.0"), protobufVarintField(2, 1)]);
+	const descriptor = protobufField(1, tripId);
+	const tripUpdate = protobufField(1, descriptor);
+	const entity = Buffer.concat([protobufField(1, updateId), protobufField(3, tripUpdate)]);
+	return Buffer.concat([protobufField(1, header), protobufField(2, entity)]);
+}
+
+function makeDifferentialTombstone(updateId: string): Buffer {
+	const header = Buffer.concat([protobufField(1, "2.0"), protobufVarintField(2, 1)]);
+	const entity = Buffer.concat([protobufField(1, updateId), protobufVarintField(2, 1)]);
+	return Buffer.concat([protobufField(1, header), protobufField(2, entity)]);
+}
+
+function makeTripUpdateFeedWithStops(updateId: string, tripId: string, stopIds: string[]): Buffer {
+	const header = protobufField(1, "2.0");
+	const descriptor = protobufField(1, tripId);
+	const stopTimeUpdates = stopIds.map((stopId, index) => Buffer.concat([
+		protobufVarintField(1, index + 1),
+		protobufField(4, stopId),
+	]));
+	const tripUpdate = Buffer.concat([
+		protobufField(1, descriptor),
+		...stopTimeUpdates.map((stopTimeUpdate) => protobufField(2, stopTimeUpdate)),
+	]);
+	const entity = Buffer.concat([protobufField(1, updateId), protobufField(3, tripUpdate)]);
+	return Buffer.concat([protobufField(1, header), protobufField(2, entity)]);
+}
+
+function testRealtimeTripUpdateStopIdFilter() {
+	const gtfs = new GTFS();
+	gtfs.updateRealtime({
+		kind: "trip-updates",
+		data: makeTripUpdateFeedWithStops("stop-filter-1", "trip-1", ["stop-A", "stop-B"]),
+		targetFeedId: "feed",
+		sourceId: "source-1",
+	});
+	gtfs.updateRealtime({
+		kind: "trip-updates",
+		data: makeTripUpdateFeedWithStops("stop-filter-2", "trip-2", ["stop-C"]),
+		targetFeedId: "feed",
+		sourceId: "source-2",
+	});
+	assert.deepEqual(
+		gtfs.getRealtimeTripUpdates({ stop_id: "stop-A" }).map((update) => update.update_id),
+		["stop-filter-1"],
+	);
+	assert.deepEqual(
+		gtfs.getRealtimeTripUpdates({ stop_id: "stop-C" }).map((update) => update.update_id),
+		["stop-filter-2"],
+	);
+	assert.deepEqual(gtfs.getRealtimeTripUpdates({ stop_id: "missing-stop" }), []);
+	assert.deepEqual(
+		gtfs.getRealtimeTripUpdates({ stop_id: "stop-A", trip_id: "trip-2" }),
+		[],
+		"stop_id must intersect with trip_id instead of being ignored",
+	);
+}
+
+async function testCompiledSnapshotIntegrity() {
+	const { readFileSync, writeFileSync } = await import("node:fs");
+	const gtfs = new GTFS({ filesToLoad: ["stops.txt"] });
+	await gtfs.loadFromBuffers(
+		[createZip({ "stops.txt": "stop_id,stop_name\ns,GoodName\n" })],
+		["integrity"],
+	);
+	mkdirSync("test_cache", { recursive: true });
+	gtfs.saveCompiledSnapshot("test_cache/snapshot-integrity.bin");
+	const good = readFileSync("test_cache/snapshot-integrity.bin");
+	const needle = Buffer.from("GoodName");
+	const at = good.indexOf(needle);
+	assert.ok(at >= 0, "snapshot must embed the stop name bytes");
+	const flipped = Buffer.from(good);
+	flipped[at] ^= 0x01;
+	writeFileSync("test_cache/snapshot-integrity-flipped.bin", flipped);
+	assert.throws(
+		() => new GTFS().loadCompiledSnapshot("test_cache/snapshot-integrity-flipped.bin"),
+		/checksum|mismatch|corrupt|invalid/i,
+		"a single-bit content flip must not load silently",
+	);
+	// Trailing bytes with a patched fileSize must also be rejected, not ignored.
+	const patched = Buffer.concat([good, Buffer.from("EXTRA")]);
+	patched.writeBigUInt64LE(BigInt(patched.length), 16);
+	writeFileSync("test_cache/snapshot-integrity-trailing.bin", patched);
+	assert.throws(
+		() => new GTFS().loadCompiledSnapshot("test_cache/snapshot-integrity-trailing.bin"),
+		/trailing|checksum|mismatch|size|extra|end/i,
+		"trailing bytes must not load silently",
+	);
+}
+
+async function testParentStationExactMatchContract() {
+	// No README/types contract backs parent-station expansion: stop_id stays
+	// exact-match and parent_station filters children exactly.
+	const gtfs = new GTFS({ filesToLoad: ["stops.txt"] });
+	await gtfs.loadFromBuffers(
+		[createZip({
+			"stops.txt":
+				"stop_id,stop_name,location_type,parent_station\n" +
+				"STN,Station,1,\nP1,Platform 1,0,STN\nS1,Solo,0,\n",
+		})],
+		["parent"],
+	);
+	assert.deepEqual(
+		gtfs.getStops({ parent_station: "STN" } as Partial<import("./types.js").Stop>).map((stop) => stop.stop_id),
+		["P1"],
+	);
+	assert.deepEqual(gtfs.getStops({ stop_id: "STN" }).map((stop) => stop.stop_id), ["STN"]);
+}
+
+async function testAdversarialParserAndAtomicPublication() {
+	const gtfs = new GTFS({ filesToLoad: ["stops.txt"] });
+	const good = createZip({ "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\ns,Good,-27,153\n" });
+	await gtfs.loadFromBuffers([good], ["good"]);
+
+	const malformedNumber = createZip({ "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\ns,Bad,-27oops,153\n" });
+	await assert.rejects(gtfs.loadFromBuffers([malformedNumber], ["bad"]), /floating-point/);
+	assert.deepEqual(gtfs.getStops().map((stop) => stop.stop_name), ["Good"]);
+
+	const missingColumn = createZip({ "stops.txt": "stop_name\nCollapsed\n" });
+	await assert.rejects(gtfs.loadFromBuffers([missingColumn], ["bad"]), /required column stop_id/);
+	assert.equal(gtfs.getStops().length, 1);
+
+	const multiline = createZip({ "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\ns,\"Line one\nLine two\",-27,153\n" });
+	await gtfs.loadFromBuffers([multiline], ["multiline"]);
+	assert.equal(gtfs.getStops()[0].stop_name, "Line one\nLine two");
+
+	const corrupt = Buffer.from(good);
+	corrupt[30 + Buffer.byteLength("stops.txt") + 2] ^= 0xff;
+	await assert.rejects(gtfs.loadFromBuffers([corrupt], ["corrupt"]), /extract/);
+	assert.equal(gtfs.getStops()[0].stop_name, "Line one\nLine two");
+}
+
+function testRealtimeAtomicityAndIncrementality() {
+	const gtfs = new GTFS();
+	const first = makeTripUpdateFeed("one", "trip-one");
+	gtfs.updateRealtime({ kind: "trip-updates", data: first, targetFeedId: "feed", sourceId: "source" });
+	const revision = gtfs.getRealtimeRevision();
+	assert.throws(() => gtfs.updateRealtime({
+		kind: "trip-updates", data: Buffer.concat([first, Buffer.from([0xff])]), targetFeedId: "feed", sourceId: "source",
+	}), /Failed to parse GTFS-RT/);
+	assert.deepEqual(gtfs.getRealtimeTripUpdates().map((update) => update.update_id), ["one"]);
+	assert.equal(gtfs.getRealtimeRevision(), revision);
+
+	gtfs.updateRealtime({
+		kind: "trip-updates", data: makeDifferentialTripUpdateFeed("two", "trip-two"), targetFeedId: "feed", sourceId: "source",
+	});
+	assert.deepEqual(gtfs.getRealtimeTripUpdates().map((update) => update.update_id).sort(), ["one", "two"]);
+	gtfs.updateRealtime({
+		kind: "trip-updates", data: makeDifferentialTombstone("one"), targetFeedId: "feed", sourceId: "source",
+	});
+	assert.deepEqual(gtfs.getRealtimeTripUpdates().map((update) => update.update_id), ["two"]);
+	const unchangedRevision = gtfs.getRealtimeRevision();
+	gtfs.updateRealtime({
+		kind: "trip-updates",
+		data: protobufField(1, Buffer.concat([protobufField(1, "2.0"), protobufVarintField(2, 1)])),
+		targetFeedId: "feed",
+		sourceId: "source",
+	});
+	assert.equal(gtfs.getRealtimeRevision(), unchangedRevision);
+
+	assert.throws(() => gtfs.updateRealtime({
+		kind: "trip-updates", data: makeVehicleFeedWithCarriages(), targetFeedId: "feed", sourceId: "wrong-kind",
+	}), /Failed to parse GTFS-RT/);
+	const vehicles = new GTFS();
+	vehicles.updateRealtime({ kind: "vehicles", data: makeVehicleFeedWithCarriages(), targetFeedId: "feed", sourceId: "vehicles" });
+	assert.equal(vehicles.getRealtimeVehiclePositions()[0].position, null);
+}
+
+async function testGenerationOwnershipAndMetadata() {
+	const rows = Array.from({ length: 40_000 }, (_, index) => `big-${index},Big ${index},-27,153\n`).join("");
+	const big = createZip({ "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" + rows });
+	const small = createZip({ "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\nsmall,Small,-27,153\n" });
+	const gtfs = new GTFS({ filesToLoad: ["stops.txt"] });
+	const older = gtfs.loadFromBuffers([big], ["big"]);
+	const newer = gtfs.loadFromBuffers([small], ["small"]);
+	await Promise.all([older, newer]);
+	assert.deepEqual(gtfs.getStops().map((stop) => stop.stop_id), ["small"]);
+
+	const pending = gtfs.loadFromBuffers([big], ["big"]);
+	gtfs.clearStatic();
+	await pending;
+	assert.equal(gtfs.getStops().length, 0);
+
+	const full = new GTFS();
+	await full.loadFromBuffers([makeCollisionFeed("Metadata")], ["feed"]);
+	assert.equal(full.getSnapshotRevision().trip_count, 2);
+	assert.equal(full.getStaticSnapshotInfo().trip_count, 2);
+	assert.deepEqual(full.getFrequencies({ trip_id: "shared-trip", feed_id: "feed" }), [{
+		trip_id: "shared-trip", start_time: 21600, end_time: 32400, headway_secs: 600, exact_times: 1, feed_id: "feed",
+	}]);
+	assert.deepEqual(
+		full.getStopTimes({ trip_id: "shared-trip", feed_id: "feed", date: "20260807", dateMode: "timestamp" })
+			.map((stopTime) => stopTime.arrival_time).sort((a, b) => (a ?? 0) - (b ?? 0)),
+		[5400, 91800],
+	);
+	assert.throws(() => full.getTrips({ direction_id: "abc" as unknown as number }), /must be an integer/);
+	assert.deepEqual(full.getTrips({ date: "20260230" }), []);
+	assert.throws(() => full.actions.mergeStops("missing", ["shared-stop"], "feed"), /target does not exist/);
+	const packed = full.getStopTimesPacked({ trip_id: "shared-trip", feed_id: "feed" });
+	assert.equal(packed.strings[packed.stopHeadsigns[0]], "");
+	const dates = full.getServiceDates({ feedId: "feed", localId: "shared-service" });
+	dates.push("20990101");
+	assert.equal(full.getServiceDates({ feedId: "feed", localId: "shared-service" }).includes("20990101"), false);
+	mkdirSync("test_cache", { recursive: true });
+	full.saveCompiledSnapshot("test_cache/snapshot-roundtrip.bin");
+	const restored = new GTFS();
+	restored.loadCompiledSnapshot("test_cache/snapshot-roundtrip.bin");
+	assert.deepEqual(restored.getFrequencies({ trip_id: "shared-trip" }), full.getFrequencies({ trip_id: "shared-trip" }));
+}
+
+async function listen(server: Server): Promise<number> {
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("test server did not bind TCP");
+	return address.port;
+}
+
+async function testRedirectPolicy() {
+	let targetRequests = 0;
+	const target = createServer((_request, response) => {
+		targetRequests++;
+		response.end("unexpected");
+	});
+	const targetPort = await listen(target);
+	const source = createServer((_request, response) => {
+		response.writeHead(302, { location: `http://127.0.0.1:${targetPort}/feed.zip` });
+		response.end();
+	});
+	const sourcePort = await listen(source);
+	try {
+		await assert.rejects(
+			new GTFS().loadStatic({ id: "redirect", url: `http://127.0.0.1:${sourcePort}/start`, headers: { Authorization: "Bearer test-only" } }),
+			/non-public address/,
+		);
+		assert.equal(targetRequests, 0, "a cross-origin redirect must be rejected before credentials or a request reach it");
+	} finally {
+		await Promise.all([
+			new Promise<void>((resolve, reject) => target.close((error) => error ? reject(error) : resolve())),
+			new Promise<void>((resolve, reject) => source.close((error) => error ? reject(error) : resolve())),
+		]);
+	}
+}
+
+async function closeServer(server: Server): Promise<void> {
+	await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+
+function agencyZip(name: string): Buffer {
+	return createZip({ "agency.txt": `agency_name,agency_url,agency_timezone\n${name},https://example.invalid,Australia/Brisbane\n` });
+}
+
+async function testStaticFallbackUrls() {
+	const fallbackZip = agencyZip("Fallback");
+	let primaryHits = 0;
+	let fallbackHits = 0;
+	const primary = createServer((_request, response) => {
+		primaryHits++;
+		response.writeHead(500, { "content-type": "text/plain" });
+		response.end("primary down");
+	});
+	const fallback = createServer((request, response) => {
+		if (request.url?.includes("/missing")) {
+			response.writeHead(500, { "content-type": "text/plain" });
+			response.end("fallback down");
+			return;
+		}
+		fallbackHits++;
+		response.writeHead(200, { "content-type": "application/zip", "content-length": String(fallbackZip.length) });
+		response.end(fallbackZip);
+	});
+	const primaryPort = await listen(primary);
+	const fallbackPort = await listen(fallback);
+	const primaryUrl = `http://127.0.0.1:${primaryPort}/feed.zip`;
+	const fallbackUrl = `http://127.0.0.1:${fallbackPort}/feed.zip`;
+	try {
+		const gtfs = new GTFS({ filesToLoad: ["agency.txt"] });
+		const results = await gtfs.loadStatic({ id: "fallback", url: primaryUrl, fallbackUrls: [fallbackUrl] });
+		assert.equal(results[0].source, "network");
+		assert.equal(gtfs.getAgencies()[0].agency_name, "Fallback");
+		assert.equal(primaryHits, 1);
+		assert.equal(fallbackHits, 1);
+
+		// Primary success must not touch the fallback.
+		let goodHits = 0;
+		const good = createServer((_request, response) => {
+			goodHits++;
+			response.writeHead(200, { "content-type": "application/zip", "content-length": String(fallbackZip.length) });
+			response.end(fallbackZip);
+		});
+		const goodPort = await listen(good);
+		try {
+			const beforeFallback = fallbackHits;
+			const gtfs2 = new GTFS({ filesToLoad: ["agency.txt"] });
+			await gtfs2.loadStatic({ id: "primary-ok", url: `http://127.0.0.1:${goodPort}/feed.zip`, fallbackUrls: [fallbackUrl] });
+			assert.equal(goodHits, 1);
+			assert.equal(fallbackHits, beforeFallback);
+		} finally {
+			await closeServer(good);
+		}
+
+		// Validation: duplicate, bad protocol, and non-array fallbacks are rejected.
+		await assert.rejects(
+			new GTFS().loadStatic({ id: "dup", url: primaryUrl, fallbackUrls: [primaryUrl] }),
+			/duplicate fallback/,
+		);
+		await assert.rejects(
+			new GTFS().loadStatic({ id: "proto", url: primaryUrl, fallbackUrls: ["ftp://example.invalid/feed.zip"] }),
+			/http\(s\)/,
+		);
+		await assert.rejects(
+			// @ts-expect-error runtime validation for non-array input
+			new GTFS().loadStatic({ id: "array", url: primaryUrl, fallbackUrls: "not-an-array" }),
+			/must be an array/,
+		);
+		// All URLs down with no cache must surface the last error.
+		await assert.rejects(
+			new GTFS({ filesToLoad: ["agency.txt"] }).loadStatic({ id: "down", url: primaryUrl, fallbackUrls: [`http://127.0.0.1:${fallbackPort}/missing`] }),
+			/Failed to download|500/,
+		);
+	} finally {
+		await Promise.all([closeServer(primary), closeServer(fallback)]);
+	}
+}
+
+async function testRealtimeAggregateDeadline() {
+	const fastPayload = makeTripUpdateFeed("fast-1", "trip-fast");
+	let slowHits = 0;
+	const fast = createServer((_request, response) => {
+		response.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(fastPayload.length) });
+		response.end(fastPayload);
+	});
+	const slow = createServer((_request, response) => {
+		slowHits++;
+		setTimeout(() => {
+			try {
+				response.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(fastPayload.length) });
+				response.end(fastPayload);
+			} catch {}
+		}, 400);
+	});
+	const fastPort = await listen(fast);
+	const slowPort = await listen(slow);
+	const sources = (suffix: string) => ([
+		{ id: `fast-${suffix}`, targetFeedId: "feed", kind: "trip-updates" as const, url: `http://127.0.0.1:${fastPort}/rt` },
+		{ id: `slow-${suffix}`, targetFeedId: "feed", kind: "trip-updates" as const, url: `http://127.0.0.1:${slowPort}/rt` },
+	]);
+	try {
+		const gtfs = new GTFS({ requestTimeoutMs: 5_000, realtimeTimeoutMs: 5_000 });
+		await assert.rejects(gtfs.fetchRealtimeSources(sources("timeout"), { timeoutMs: 100 }), /timed out after 100ms/);
+		assert.deepEqual(gtfs.getRealtimeTripUpdates(), [], "a timed-out aggregate must not mutate the snapshot");
+		const fetched = await gtfs.fetchRealtimeSources(sources("ok"), { timeoutMs: 5_000 });
+		assert.equal(fetched.length, 2);
+		assert.ok(fetched.every((entry) => entry.ok), "fast aggregate within deadline must succeed");
+		await assert.rejects(gtfs.fetchRealtimeSources(sources("bad"), { timeoutMs: 0 }), /positive finite/);
+		assert.equal(slowHits >= 1, true);
+	} finally {
+		await Promise.all([closeServer(fast), closeServer(slow)]);
+	}
+}
+
+async function testStaticCacheHeadersAndTempNaming() {
+	const { readdirSync, rmSync } = await import("node:fs");
+	const zip = agencyZip("Cached");
+	let hits = 0;
+	const server = createServer((_request, response) => {
+		hits++;
+		response.writeHead(200, { "content-type": "application/zip", "content-length": String(zip.length) });
+		response.end(zip);
+	});
+	const port = await listen(server);
+	const cacheDir = "test_cache/static-headers-temp";
+	rmSync(cacheDir, { recursive: true, force: true });
+	mkdirSync(cacheDir, { recursive: true });
+	try {
+		const url = `http://127.0.0.1:${port}/feed.zip`;
+		const first = new GTFS({ cache: true, cacheDir, cacheMaxAgeMs: 60_000, filesToLoad: ["agency.txt"] });
+		const r1 = await first.loadStatic({ id: "a", url, headers: { B: "2", A: "1" } });
+		assert.equal(r1[0].source, "network");
+		assert.equal(hits, 1);
+		// Same headers in a different key order must hit the same canonical cache entry.
+		const second = new GTFS({ cache: true, cacheDir, cacheMaxAgeMs: 60_000, filesToLoad: ["agency.txt"] });
+		const r2 = await second.loadStatic({ id: "a", url, headers: { A: "1", B: "2" } });
+		assert.equal(r2[0].source, "fresh-cache");
+		assert.equal(hits, 1, "header key order must not fragment the static cache");
+		const entries = readdirSync(cacheDir);
+		assert.ok(entries.length >= 1, "cache directory must contain the unified entry");
+		assert.deepEqual(entries.filter((name) => name.includes(".tmp.")), [], "no temp files may remain after atomic cache writes");
+		assert.ok(entries.every((name) => !name.endsWith(".tmp")), "temp suffix must be identifiable and cleaned up");
+	} finally {
+		await closeServer(server);
+	}
+}
+
+async function testCompiledSnapshotPreservesRealtime() {
+	const { rmSync } = await import("node:fs");
+	const gtfs = new GTFS({ filesToLoad: ["stops.txt"] });
+	await gtfs.loadFromBuffers([createZip({ "stops.txt": "stop_id,stop_name\ns,Safety\n" })], ["safety"]);
+	gtfs.updateRealtime({
+		kind: "vehicles",
+		data: makeVehicleFeedWithCarriages("safety-vehicle", "safety-trip"),
+		targetFeedId: "safety",
+		sourceId: "safety-source",
+	});
+	assert.equal(gtfs.getRealtimeVehiclePositions().length, 1);
+	const changedBefore = gtfs.getLastChangedTripIds();
+	assert.equal(changedBefore.length, 1);
+	mkdirSync("test_cache", { recursive: true });
+	const snapshotPath = "test_cache/snapshot-safety.bin";
+	rmSync(snapshotPath, { force: true });
+	gtfs.saveCompiledSnapshot(snapshotPath);
+	// A failed load must leave the live snapshot and JS aggregate untouched.
+	assert.throws(() => gtfs.loadCompiledSnapshot("test_cache/missing-safety.bin"), /Cannot read compiled snapshot/);
+	assert.equal(gtfs.getStops()[0].stop_name, "Safety");
+	assert.equal(gtfs.getRealtimeVehiclePositions().length, 1);
+	// A successful load preserves the native realtime overlay and the JS aggregate.
+	gtfs.loadCompiledSnapshot(snapshotPath);
+	assert.equal(gtfs.getStops()[0].stop_name, "Safety");
+	assert.equal(gtfs.getRealtimeVehiclePositions().length, 1);
+	assert.deepEqual(gtfs.getLastChangedTripIds(), changedBefore);
+	assert.throws(() => gtfs.loadCompiledSnapshot("  "), /non-empty/);
+}
+
+async function testPackageMetadata() {
+	const { readFileSync, existsSync } = await import("node:fs");
+	const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+	assert.equal(pkg.browser, undefined, "browser field must stay removed (browser.ts was deleted)");
+	assert.ok(Array.isArray(pkg.files), "files whitelist must exist so stale build outputs are not packed");
+	assert.ok(pkg.files.includes("dist/*.js") || pkg.files.includes("dist/index.js"), "dist output must be packaged");
+	assert.ok(!pkg.files.includes("build") && !pkg.files.includes("dist/build"), "stale native outputs must not be packaged");
+	assert.ok(existsSync("dist/index.js") && existsSync("dist/types.js"), "exported entry points must exist after build");
+	assert.equal(existsSync("dist/build/Release/gtfs_addon.node"), false, "stale dist/build ABI copy must not exist");
+}
+
 await testSharedCalendarExpansionKeepsServiceExceptionsSeparate();
 await testShapeFiltersAndMergeStrategies();
 await testQualifiedIdentityAndRealtimeProvenance();
@@ -758,4 +1201,16 @@ testFeedIdentityValidation();
 testNestedArchiveExtraction();
 await testRealtimeIndexesAndRefreshResult();
 await testIndexedLookupScaling();
+await testAdversarialParserAndAtomicPublication();
+testRealtimeAtomicityAndIncrementality();
+testRealtimeTripUpdateStopIdFilter();
+await testParentStationExactMatchContract();
+await testCompiledSnapshotIntegrity();
+await testGenerationOwnershipAndMetadata();
+await testRedirectPolicy();
+await testStaticFallbackUrls();
+await testRealtimeAggregateDeadline();
+await testStaticCacheHeadersAndTempNaming();
+await testCompiledSnapshotPreservesRealtime();
+await testPackageMetadata();
 console.log("All QDF-GTFS tests passed.");

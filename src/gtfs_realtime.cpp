@@ -4,6 +4,10 @@
 #include <string>
 #include <vector>
 #include <iostream>
+#include <stdexcept>
+#include <unordered_set>
+#include <limits>
+#include <cmath>
 
 namespace gtfs {
 
@@ -55,6 +59,8 @@ struct RealtimeParseContext {
     std::string feed_id;
     std::string source_id;
     RealtimeParseResult* result;
+    int type;
+    std::unordered_set<std::string> entity_ids;
 };
 
 // --- Main Parsing Functions ---
@@ -118,6 +124,7 @@ bool decode_carriage_details(pb_istream_t* stream, const pb_field_t* field, void
                 if (wire_type != PB_WT_VARINT) return false;
                 uint32_t value;
                 if (!pb_decode_varint32(stream, &value)) return false;
+                if (value > 6) return false;
                 carriage.occupancy_status = static_cast<int>(value);
                 break;
             }
@@ -125,6 +132,7 @@ bool decode_carriage_details(pb_istream_t* stream, const pb_field_t* field, void
                 if (wire_type != PB_WT_VARINT) return false;
                 uint32_t value;
                 if (!pb_decode_varint32(stream, &value)) return false;
+                if (value > 100) return false;
                 carriage.occupancy_percentage = static_cast<int>(value);
                 break;
             }
@@ -132,6 +140,7 @@ bool decode_carriage_details(pb_istream_t* stream, const pb_field_t* field, void
                 if (wire_type != PB_WT_VARINT) return false;
                 uint32_t value;
                 if (!pb_decode_varint32(stream, &value)) return false;
+                if (value > static_cast<uint32_t>(std::numeric_limits<int>::max())) return false;
                 carriage.carriage_sequence = static_cast<int>(value);
                 break;
             }
@@ -149,7 +158,8 @@ bool decode_carriage_details(pb_istream_t* stream, const pb_field_t* field, void
 
 // --- Main Entry Points ---
 RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf, size_t len, int type, const std::string& feed_id = "", const std::string& source_id = "") {
-    (void)type;
+    if (!buf || len == 0) throw std::runtime_error("GTFS-RT payload is empty");
+    if (type < 0 || type > 2) throw std::runtime_error("Invalid GTFS-RT payload kind");
     RealtimeParseResult result;
     GTFSv2_Realtime_FeedMessage message = GTFSv2_Realtime_FeedMessage_init_zero;
 
@@ -307,11 +317,26 @@ RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf
         if (!pb_decode(stream, GTFSv2_Realtime_FeedEntity_fields, &entity))
             return false;
 
+        if (entity_id.empty() || !ctx->entity_ids.insert(entity_id).second) return false;
+        if (entity.is_deleted) {
+            ctx->result->tombstone_ids.push_back(entity_id);
+            return true;
+        }
+
+        const int payload_count = static_cast<int>(entity.has_trip_update) +
+            static_cast<int>(entity.has_vehicle) + static_cast<int>(entity.has_alert);
+        const bool expected_payload = (ctx->type == 0 && entity.has_trip_update) ||
+            (ctx->type == 1 && entity.has_vehicle) || (ctx->type == 2 && entity.has_alert);
+        if (payload_count != 1 || !expected_payload) return false;
+
         if (entity.has_trip_update) {
             tu_ctx.current_update.update_id = entity_id;
             tu_ctx.current_update.is_deleted = entity.is_deleted;
 
-            if (entity.trip_update.has_timestamp) tu_ctx.current_update.timestamp = entity.trip_update.timestamp;
+            if (entity.trip_update.has_timestamp) {
+                tu_ctx.current_update.timestamp = entity.trip_update.timestamp;
+                tu_ctx.current_update.has_timestamp = true;
+            }
 
             if (entity.trip_update.has_delay) tu_ctx.current_update.delay = entity.trip_update.delay;
             else tu_ctx.current_update.delay = -2147483648;
@@ -321,6 +346,14 @@ RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf
 
             if (entity.trip_update.trip.has_schedule_relationship) tu_ctx.current_update.trip.schedule_relationship = entity.trip_update.trip.schedule_relationship;
             else tu_ctx.current_update.trip.schedule_relationship = 0;
+
+            if (tu_ctx.current_update.trip.trip_id.empty() ||
+                (tu_ctx.current_update.trip.direction_id != -1 && tu_ctx.current_update.trip.direction_id > 1) ||
+                (tu_ctx.current_update.trip.schedule_relationship < 0 || tu_ctx.current_update.trip.schedule_relationship > 5)) return false;
+            for (const auto& stu : tu_ctx.current_update.stop_time_updates) {
+                if ((stu.stop_sequence < 0 && stu.stop_id.empty()) || stu.schedule_relationship < 0 || stu.schedule_relationship > 3 ||
+                    stu.arrival_time < -1 || stu.departure_time < -1 || stu.arrival_uncertainty < -1 || stu.departure_uncertainty < -1) return false;
+            }
 
             for(auto& stu : tu_ctx.current_update.stop_time_updates) {
                 if(stu.trip_id.empty()) {
@@ -351,7 +384,10 @@ RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf
              if (entity.vehicle.has_current_status) vp_ctx.current_pos.current_status = entity.vehicle.current_status;
              else vp_ctx.current_pos.current_status = -1;
 
-             if (entity.vehicle.has_timestamp) vp_ctx.current_pos.timestamp = entity.vehicle.timestamp;
+             if (entity.vehicle.has_timestamp) {
+                 vp_ctx.current_pos.timestamp = entity.vehicle.timestamp;
+                 vp_ctx.current_pos.has_timestamp = true;
+             }
 
              if (entity.vehicle.has_congestion_level) vp_ctx.current_pos.congestion_level = entity.vehicle.congestion_level;
              else vp_ctx.current_pos.congestion_level = -1;
@@ -368,7 +404,19 @@ RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf
              if (entity.vehicle.trip.has_schedule_relationship) vp_ctx.current_pos.trip.schedule_relationship = entity.vehicle.trip.schedule_relationship;
              else vp_ctx.current_pos.trip.schedule_relationship = 0;
 
+             if (vp_ctx.current_pos.trip.trip_id.empty() ||
+                 (vp_ctx.current_pos.trip.direction_id != -1 && vp_ctx.current_pos.trip.direction_id > 1) ||
+                 (vp_ctx.current_pos.trip.schedule_relationship < 0 || vp_ctx.current_pos.trip.schedule_relationship > 5) ||
+                 (vp_ctx.current_pos.current_status != -1 && vp_ctx.current_pos.current_status > 2) ||
+                 (vp_ctx.current_pos.congestion_level != -1 && vp_ctx.current_pos.congestion_level > 4) ||
+                 (vp_ctx.current_pos.occupancy_status != -1 && vp_ctx.current_pos.occupancy_status > 6) ||
+                 (vp_ctx.current_pos.occupancy_percentage != -1 && vp_ctx.current_pos.occupancy_percentage > 100)) return false;
+
              if (entity.vehicle.has_position) {
+                 if (!std::isfinite(entity.vehicle.position.latitude) || !std::isfinite(entity.vehicle.position.longitude) ||
+                     entity.vehicle.position.latitude < -90 || entity.vehicle.position.latitude > 90 ||
+                     entity.vehicle.position.longitude < -180 || entity.vehicle.position.longitude > 180) return false;
+                 vp_ctx.current_pos.has_position = true;
                  vp_ctx.current_pos.position.latitude = entity.vehicle.position.latitude;
                  vp_ctx.current_pos.position.longitude = entity.vehicle.position.longitude;
 
@@ -406,6 +454,10 @@ RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf
             if (entity.alert.has_severity_level) al_ctx.current_alert.severity_level = entity.alert.severity_level;
             else al_ctx.current_alert.severity_level = -1;
 
+            if ((al_ctx.current_alert.cause != -1 && (al_ctx.current_alert.cause < 1 || al_ctx.current_alert.cause > 12)) ||
+                (al_ctx.current_alert.effect != -1 && (al_ctx.current_alert.effect < 1 || al_ctx.current_alert.effect > 11)) ||
+                (al_ctx.current_alert.severity_level != -1 && (al_ctx.current_alert.severity_level < 1 || al_ctx.current_alert.severity_level > 4))) return false;
+
             const size_t index = al_ctx.data->realtime_alerts.size();
             al_ctx.data->realtime_alerts.push_back(std::move(al_ctx.current_alert));
             al_ctx.data->indexRealtimeAlert(index);
@@ -418,12 +470,15 @@ RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf
     ctx.feed_id = feed_id;
     ctx.source_id = source_id;
     ctx.result = &result;
+    ctx.type = type;
     message.entity.arg = &ctx;
 
     pb_istream_t stream = pb_istream_from_buffer(buf, len);
     if (!pb_decode(&stream, GTFSv2_Realtime_FeedMessage_fields, &message)) {
-        std::cerr << "Failed to parse protobuf: " << PB_GET_ERROR(&stream) << std::endl;
+        throw std::runtime_error(std::string("Failed to parse GTFS-RT protobuf: ") + PB_GET_ERROR(&stream));
     }
+    result.differential = message.header.has_incrementality &&
+        message.header.incrementality == GTFSv2_Realtime_FeedHeader_Incrementality_DIFFERENTIAL;
     return result;
 }
 

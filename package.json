@@ -4,7 +4,6 @@
   "description": "",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "browser": "dist/browser.js",
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -17,10 +16,17 @@
       "types": "./dist/types.d.ts"
     }
   },
+  "files": [
+    "dist/*.js",
+    "dist/*.d.ts",
+    "src",
+    "binding.gyp"
+  ],
   "scripts": {
     "test": "tsx test.ts",
     "build": "tsc",
-    "prepare": "nub run build",
+    "install": "node-gyp rebuild",
+    "prepare": "npm run build",
     "benchmark:core": "nub run build && node --expose-gc benchmarks/core.mjs"
   },
   "keywords": [],
@@ -28,11 +34,11 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "node-addon-api": "^8.5.0"
+    "node-addon-api": "^8.5.0",
+    "node-gyp": "^12.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
-    "node-gyp": "^12.1.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },

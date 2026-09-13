@@ -40,15 +40,54 @@ uint32_t GTFSData::snapshotArchHash() {
 }
 
 static void writeU32(std::ostream& os, uint32_t v) { os.write(reinterpret_cast<char*>(&v), sizeof(v)); }
-static void writeU64(std::ostream& os, uint64_t v) { os.write(reinterpret_cast<char*>(&v), sizeof(v)); }
 static void writeI32(std::ostream& os, int32_t v) { os.write(reinterpret_cast<char*>(&v), sizeof(v)); }
 static void writeF64(std::ostream& os, double v) { os.write(reinterpret_cast<char*>(&v), sizeof(v)); }
 static void writeU8(std::ostream& os, uint8_t v) { os.write(reinterpret_cast<char*>(&v), 1); }
-static bool readU32(std::istream& is, uint32_t& v) { is.read(reinterpret_cast<char*>(&v), sizeof(v)); return is.good(); }
-static bool readU64(std::istream& is, uint64_t& v) { is.read(reinterpret_cast<char*>(&v), sizeof(v)); return is.good(); }
-static bool readI32(std::istream& is, int32_t& v) { is.read(reinterpret_cast<char*>(&v), sizeof(v)); return is.good(); }
-static bool readF64(std::istream& is, double& v) { is.read(reinterpret_cast<char*>(&v), sizeof(v)); return is.good(); }
-static bool readU8(std::istream& is, uint8_t& v) { is.read(reinterpret_cast<char*>(&v), 1); return is.good(); }
+static bool readU32(std::istream& is, uint32_t& v) { is.read(reinterpret_cast<char*>(&v), sizeof(v)); return static_cast<bool>(is); }
+static bool readI32(std::istream& is, int32_t& v) { is.read(reinterpret_cast<char*>(&v), sizeof(v)); return static_cast<bool>(is); }
+static bool readF64(std::istream& is, double& v) { is.read(reinterpret_cast<char*>(&v), sizeof(v)); return static_cast<bool>(is); }
+static bool readU8(std::istream& is, uint8_t& v) { is.read(reinterpret_cast<char*>(&v), 1); return static_cast<bool>(is); }
+
+// CRC32-IEEE (polynomial 0xEDB88320) over snapshot body bytes.
+static uint32_t crc32Update(uint32_t crc, const char* data, size_t size) {
+    static uint32_t table[256];
+    static bool initialized = false;
+    if (!initialized) {
+        for (uint32_t i = 0; i < 256; ++i) {
+            uint32_t c = i;
+            for (int b = 0; b < 8; ++b) c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+            table[i] = c;
+        }
+        initialized = true;
+    }
+    for (size_t i = 0; i < size; ++i) {
+        crc = table[(crc ^ static_cast<unsigned char>(data[i])) & 0xFF] ^ (crc >> 8);
+    }
+    return crc;
+}
+
+static bool crc32FileBody(const std::string& path, uint64_t bodyOffset, uint64_t bodySize, uint32_t& out, std::string& error) {
+    std::ifstream is(path, std::ios::binary);
+    if (!is) { error = "cannot reopen snapshot for checksum"; return false; }
+    is.seekg(static_cast<std::streamoff>(bodyOffset), std::ios::beg);
+    if (!is) { error = "cannot seek snapshot for checksum"; return false; }
+    uint32_t crc = 0xFFFFFFFFu;
+    std::vector<char> chunk(64 * 1024);
+    uint64_t remaining = bodySize;
+    while (remaining > 0) {
+        const size_t want = static_cast<size_t>(std::min<uint64_t>(remaining, chunk.size()));
+        is.read(chunk.data(), static_cast<std::streamsize>(want));
+        const std::streamsize got = is.gcount();
+        if (got <= 0 || static_cast<uint64_t>(got) != want) {
+            error = "cannot read snapshot body for checksum";
+            return false;
+        }
+        crc = crc32Update(crc, chunk.data(), static_cast<size_t>(got));
+        remaining -= static_cast<uint64_t>(got);
+    }
+    out = crc ^ 0xFFFFFFFFu;
+    return true;
+}
 
 static void writeString(std::ostream& os, const std::string& s) {
     writeU32(os, static_cast<uint32_t>(s.size()));
@@ -80,7 +119,7 @@ static bool readOptionalString(std::istream& is, std::optional<std::string>& v) 
 
 struct SnapshotHeader {
     uint32_t magic = 0x51444653;
-    uint32_t version = 2;
+    uint32_t version = 4;
     uint32_t archHash = 0;
     uint32_t headerSize = sizeof(SnapshotHeader);
     uint64_t fileSize = 0;
@@ -96,39 +135,57 @@ struct SnapshotHeader {
     uint32_t shapeCount = 0;
     uint32_t feedInfoCount = 0;
     uint32_t staticOccupancyCount = 0;
-    uint32_t reserved = 0;
+    uint32_t frequencyCount = 0;
+    uint32_t checksum = 0; // CRC32-IEEE of all bytes after the header
 };
 
 bool GTFSData::saveCompiledSnapshot(const std::string& path, std::string& error) const {
     try {
         std::filesystem::path p(path);
-        std::filesystem::create_directories(p.parent_path());
-        std::string tmp = path + "." + std::to_string(getpid()) + ".tmp";
+        if (!p.parent_path().empty()) {
+            std::filesystem::create_directories(p.parent_path());
+        }
+        std::random_device random;
+        std::string tmp = path + "." + std::to_string(getpid()) + "." + std::to_string(random()) + ".tmp";
         std::ofstream os(tmp, std::ios::binary);
         if (!os) { error = "cannot open temp file"; return false; }
 
         SnapshotHeader hdr;
         hdr.archHash = snapshotArchHash();
-        // Prepare counts
+        // Prepare counts. Fail loudly instead of truncating a 64-bit size
+        // into the 32-bit header (integer overflow would corrupt the file).
+        auto checkedCount = [&](size_t value, const char* label) -> uint32_t {
+            if (value > std::numeric_limits<uint32_t>::max()) {
+                throw std::runtime_error(std::string(label) + " count exceeds snapshot limit");
+            }
+            return static_cast<uint32_t>(value);
+        };
         auto strings = string_pool.snapshotStrings();
-        hdr.stringPoolCount = static_cast<uint32_t>(strings.size());
-        hdr.agencyCount = 0;
-        for (auto &kv : agencies) hdr.agencyCount += kv.second.size();
-        hdr.calendarCount = 0;
-        for (auto &kv : calendars) hdr.calendarCount += kv.second.size();
-        hdr.calendarDateCount = 0;
-        for (auto &kv1 : calendar_dates) for (auto &kv2 : kv1.second) hdr.calendarDateCount += kv2.second.size();
-        hdr.routeCount = 0;
-        for (auto &kv : routes) hdr.routeCount += kv.second.size();
-        hdr.stopCount = 0;
-        for (auto &kv : stops) hdr.stopCount += kv.second.size();
-        hdr.stopTimeCount = static_cast<uint32_t>(stop_times.size());
-        hdr.tripCount = 0;
-        for (auto &kv : trips) hdr.tripCount += kv.second.size();
-        hdr.transferCount = static_cast<uint32_t>(transfers.size());
-        hdr.shapeCount = static_cast<uint32_t>(shapes.size());
-        hdr.feedInfoCount = static_cast<uint32_t>(feed_info.size());
-        hdr.staticOccupancyCount = static_cast<uint32_t>(static_occupancies.size());
+        hdr.stringPoolCount = checkedCount(strings.size(), "string pool");
+        size_t total = 0;
+        for (auto &kv : agencies) total += kv.second.size();
+        hdr.agencyCount = checkedCount(total, "agency");
+        total = 0;
+        for (auto &kv : calendars) total += kv.second.size();
+        hdr.calendarCount = checkedCount(total, "calendar");
+        total = 0;
+        for (auto &kv1 : calendar_dates) for (auto &kv2 : kv1.second) total += kv2.second.size();
+        hdr.calendarDateCount = checkedCount(total, "calendar date");
+        total = 0;
+        for (auto &kv : routes) total += kv.second.size();
+        hdr.routeCount = checkedCount(total, "route");
+        total = 0;
+        for (auto &kv : stops) total += kv.second.size();
+        hdr.stopCount = checkedCount(total, "stop");
+        hdr.stopTimeCount = checkedCount(stop_times.size(), "stop time");
+        total = 0;
+        for (auto &kv : trips) total += kv.second.size();
+        hdr.tripCount = checkedCount(total, "trip");
+        hdr.transferCount = checkedCount(transfers.size(), "transfer");
+        hdr.frequencyCount = checkedCount(frequencies.size(), "frequency");
+        hdr.shapeCount = checkedCount(shapes.size(), "shape");
+        hdr.feedInfoCount = checkedCount(feed_info.size(), "feed info");
+        hdr.staticOccupancyCount = checkedCount(static_occupancies.size(), "static occupancy");
 
         // Write placeholder header
         os.write(reinterpret_cast<char*>(&hdr), sizeof(hdr));
@@ -247,6 +304,16 @@ bool GTFSData::saveCompiledSnapshot(const std::string& path, std::string& error)
             uint8_t has = tr.min_transfer_time.has_value()?1:0; writeU8(os,has); if (has) writeI32(os,*tr.min_transfer_time);
             writeString(os, tr.feed_id);
         }
+        // Frequencies
+        writeU32(os, hdr.frequencyCount);
+        for (const auto& frequency : frequencies) {
+            writeString(os, frequency.trip_id);
+            writeI32(os, frequency.start_time);
+            writeI32(os, frequency.end_time);
+            writeI32(os, frequency.headway_secs);
+            writeU8(os, static_cast<uint8_t>(frequency.exact_times));
+            writeString(os, frequency.feed_id);
+        }
         // Shapes (raw)
         writeU32(os, hdr.shapeCount);
         if (!shapes.empty()) os.write(reinterpret_cast<const char*>(shapes.data()), sizeof(Shape)*shapes.size());
@@ -269,12 +336,32 @@ bool GTFSData::saveCompiledSnapshot(const std::string& path, std::string& error)
         if (!static_occupancies.empty()) os.write(reinterpret_cast<const char*>(static_occupancies.data()), sizeof(StaticOccupancy)*static_occupancies.size());
 
         os.flush();
-        uint64_t fileSize = os.tellp();
+        if (!os) { error = "failed to write snapshot body"; return false; }
+        const uint64_t fileSize = static_cast<uint64_t>(os.tellp());
+        if (fileSize < sizeof(SnapshotHeader)) { error = "snapshot body is too small"; return false; }
         hdr.fileSize = fileSize;
-        // Rewrite header with fileSize
+        hdr.checksum = 0;
+        // Rewrite header with fileSize (checksum patched below).
         os.seekp(0);
         os.write(reinterpret_cast<char*>(&hdr), sizeof(hdr));
         os.close();
+        if (!os) { error = "failed to finalize snapshot header"; return false; }
+        uint32_t checksum = 0;
+        if (!crc32FileBody(tmp, sizeof(SnapshotHeader), fileSize - sizeof(SnapshotHeader), checksum, error)) {
+            std::error_code ec;
+            std::filesystem::remove(tmp, ec);
+            return false;
+        }
+        // Patch the checksum into the temp file before the atomic rename.
+        {
+            std::fstream patch(tmp, std::ios::binary | std::ios::in | std::ios::out);
+            if (!patch) { error = "cannot patch snapshot checksum"; return false; }
+            hdr.checksum = checksum;
+            patch.seekp(0);
+            patch.write(reinterpret_cast<char*>(&hdr), sizeof(hdr));
+            patch.close();
+            if (!patch) { error = "failed to write snapshot checksum"; return false; }
+        }
         // atomic rename
         std::filesystem::rename(tmp, path);
         return true;
@@ -293,12 +380,34 @@ bool GTFSData::loadCompiledSnapshot(const std::string& path, std::string& error)
         is.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
         if (!is) { error = "cannot read header"; return false; }
         if (hdr.magic != 0x51444653) { error = "invalid magic"; return false; }
-        if (hdr.version < 2 || hdr.version > 3) { error = "incompatible version"; return false; }
+        if (hdr.version != snapshotVersion()) { error = "incompatible version"; return false; }
         if (hdr.archHash != snapshotArchHash()) { error = "incompatible arch"; return false; }
         if (hdr.fileSize != fileSize) { error = "file size mismatch"; return false; }
         if (hdr.headerSize != sizeof(SnapshotHeader)) { error = "header size mismatch"; return false; }
-        // Bounds checks: counts * size should not exceed fileSize
-        // We'll proceed reading with checks
+        constexpr uint32_t MAX_SNAPSHOT_RECORDS = 20'000'000;
+        auto validateCount = [&](uint32_t count, const char* label) {
+            if (count > MAX_SNAPSHOT_RECORDS) {
+                error = std::string(label) + " count exceeds snapshot limit";
+                return false;
+            }
+            return true;
+        };
+        for (const auto& item : std::initializer_list<std::pair<uint32_t, const char*>>{
+            {hdr.stringPoolCount, "string pool"}, {hdr.agencyCount, "agency"},
+            {hdr.calendarCount, "calendar"}, {hdr.calendarDateCount, "calendar date"},
+            {hdr.routeCount, "route"}, {hdr.stopCount, "stop"}, {hdr.stopTimeCount, "stop time"},
+            {hdr.tripCount, "trip"}, {hdr.transferCount, "transfer"}, {hdr.frequencyCount, "frequency"}, {hdr.shapeCount, "shape"},
+            {hdr.feedInfoCount, "feed info"}, {hdr.staticOccupancyCount, "static occupancy"}
+        }) if (!validateCount(item.first, item.second)) return false;
+        auto ensureRemaining = [&](uint64_t bytes, const char* label) {
+            const std::streampos position = is.tellg();
+            if (position < 0 || static_cast<uint64_t>(position) > fileSize ||
+                bytes > fileSize - static_cast<uint64_t>(position)) {
+                error = std::string(label) + " exceeds remaining snapshot bytes";
+                return false;
+            }
+            return true;
+        };
 
         clear(); // clear any existing data but keep string_pool separate handling
         // String pool
@@ -306,6 +415,7 @@ bool GTFSData::loadCompiledSnapshot(const std::string& path, std::string& error)
         if (!readU32(is, sc)) { error="cannot read string pool count"; return false; }
         if (sc != hdr.stringPoolCount) { error="string pool count mismatch"; return false; }
         if (sc > 5'000'000) { error="string pool too large"; return false; }
+        if (!ensureRemaining(static_cast<uint64_t>(sc) * sizeof(uint32_t), "string pool")) return false;
         std::vector<std::string> strings;
         strings.reserve(sc);
         for (uint32_t i=0;i<sc;i++) {
@@ -421,6 +531,7 @@ bool GTFSData::loadCompiledSnapshot(const std::string& path, std::string& error)
         uint32_t sttc;
         if (!readU32(is, sttc)) { error="cannot read stop time count"; return false; }
         if (sttc != hdr.stopTimeCount) { error="stop time count mismatch"; return false; }
+        if (!ensureRemaining(static_cast<uint64_t>(sttc) * sizeof(StopTime), "stop times")) return false;
         stop_times.resize(sttc);
         if (sttc) {
             is.read(reinterpret_cast<char*>(stop_times.data()), sizeof(StopTime)*sttc);
@@ -430,6 +541,7 @@ bool GTFSData::loadCompiledSnapshot(const std::string& path, std::string& error)
         uint32_t tc;
         if (!readU32(is, tc)) { error="cannot read trip count"; return false; }
         if (tc != hdr.tripCount) { error="trip count mismatch"; return false; }
+        if (!ensureRemaining(static_cast<uint64_t>(tc) * sizeof(Trip), "trips")) return false;
         for (uint32_t i=0;i<tc;i++) {
             Trip t;
             is.read(reinterpret_cast<char*>(&t), sizeof(Trip));
@@ -440,6 +552,7 @@ bool GTFSData::loadCompiledSnapshot(const std::string& path, std::string& error)
         uint32_t trc;
         if (!readU32(is, trc)) { error="cannot read transfer count"; return false; }
         if (trc != hdr.transferCount) { error="transfer count mismatch"; return false; }
+        if (!ensureRemaining(static_cast<uint64_t>(trc) * 11, "transfers")) return false;
         transfers.clear(); transfers.reserve(trc);
         for (uint32_t i=0;i<trc;i++) {
             Transfer tr;
@@ -456,16 +569,36 @@ bool GTFSData::loadCompiledSnapshot(const std::string& path, std::string& error)
             if (!readString(is, tr.feed_id)) return false;
             transfers.push_back(std::move(tr));
         }
+        // Frequencies
+        uint32_t frc;
+        if (!readU32(is, frc)) { error="cannot read frequency count"; return false; }
+        if (frc != hdr.frequencyCount) { error="frequency count mismatch"; return false; }
+        if (!ensureRemaining(static_cast<uint64_t>(frc) * 21, "frequencies")) return false;
+        frequencies.clear(); frequencies.reserve(frc);
+        for (uint32_t i=0; i<frc; ++i) {
+            Frequency frequency;
+            if (!readString(is, frequency.trip_id)) return false;
+            if (!readI32(is, frequency.start_time)) return false;
+            if (!readI32(is, frequency.end_time)) return false;
+            if (!readI32(is, frequency.headway_secs)) return false;
+            uint8_t exact;
+            if (!readU8(is, exact)) return false;
+            frequency.exact_times = static_cast<int8_t>(exact);
+            if (!readString(is, frequency.feed_id)) return false;
+            frequencies.push_back(std::move(frequency));
+        }
         // Shapes
         uint32_t shc;
         if (!readU32(is, shc)) { error="cannot read shape count"; return false; }
         if (shc != hdr.shapeCount) { error="shape count mismatch"; return false; }
+        if (!ensureRemaining(static_cast<uint64_t>(shc) * sizeof(Shape), "shapes")) return false;
         shapes.resize(shc);
         if (shc) { is.read(reinterpret_cast<char*>(shapes.data()), sizeof(Shape)*shc); if (!is) { error="failed to read shapes"; return false; } }
         // FeedInfo
         uint32_t fic;
         if (!readU32(is, fic)) { error="cannot read feed info count"; return false; }
         if (fic != hdr.feedInfoCount) { error="feed info count mismatch"; return false; }
+        if (!ensureRemaining(static_cast<uint64_t>(fic) * 16, "feed info")) return false;
         feed_info.clear(); feed_info.reserve(fic);
         for (uint32_t i=0;i<fic;i++) {
             FeedInfo f;
@@ -485,14 +618,42 @@ bool GTFSData::loadCompiledSnapshot(const std::string& path, std::string& error)
         uint32_t soc;
         if (!readU32(is, soc)) { error="cannot read static occupancy count"; return false; }
         if (soc != hdr.staticOccupancyCount) { error="static occupancy count mismatch"; return false; }
+        if (!ensureRemaining(static_cast<uint64_t>(soc) * sizeof(StaticOccupancy), "static occupancies")) return false;
         static_occupancies.resize(soc);
         if (soc) { is.read(reinterpret_cast<char*>(static_occupancies.data()), sizeof(StaticOccupancy)*soc); if (!is){ error="failed to read static occupancies"; return false; } }
 
+        // Integrity: the body must consume the file exactly. Trailing bytes
+        // (even with a patched fileSize) are rejected instead of ignored.
+        {
+            const std::streampos position = is.tellg();
+            if (position < 0 || static_cast<uint64_t>(position) != fileSize) {
+                clear();
+                error = "snapshot has trailing bytes past the declared body";
+                return false;
+            }
+            if (is.peek() != std::char_traits<char>::eof()) {
+                clear();
+                error = "snapshot has trailing bytes past the declared body";
+                return false;
+            }
+        }
+        is.close();
+        {
+            uint32_t actual = 0;
+            if (!crc32FileBody(path, sizeof(SnapshotHeader), fileSize - sizeof(SnapshotHeader), actual, error)) {
+                clear();
+                return false;
+            }
+            if (actual != hdr.checksum) {
+                clear();
+                error = "snapshot checksum mismatch (content corruption detected)";
+                return false;
+            }
+        }
+        // Body parsing finished; rebuild derived indexes below.
+
         // Rebuild derived indexes
         rebuildStopTimeIndexes();
-        for (auto &kv : static_occupancies) {
-            // Not needed: static_occupancies_by_trip_id rebuilt similarly as in parser
-        }
         if (!static_occupancies.empty()) {
             for (size_t i=0;i<static_occupancies.size();++i) static_occupancies_by_trip_id[static_occupancies[i].trip_id].push_back(i);
         }

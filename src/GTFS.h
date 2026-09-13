@@ -84,6 +84,9 @@ public:
         auto it = str_to_id.find(sv);
         if (it != str_to_id.end()) return it->second;
 
+        if (id_to_str.size() >= std::numeric_limits<uint32_t>::max()) {
+            throw std::runtime_error("GTFS string pool is exhausted");
+        }
         uint32_t id = static_cast<uint32_t>(id_to_str.size());
         str_to_id.emplace(std::string(sv), id);
         id_to_str.emplace_back(sv);
@@ -91,6 +94,10 @@ public:
     }
 
     uint32_t intern(const char* s, size_t len) {
+        if (!s) {
+            if (len != 0) throw std::invalid_argument("null GTFS string with non-zero length");
+            return intern(std::string_view{});
+        }
         return intern(std::string_view(s, len));
     }
 
@@ -264,6 +271,15 @@ struct Transfer {
     std::string feed_id;
 };
 
+struct Frequency {
+    std::string trip_id;
+    int32_t start_time = ST_NO_TIME;
+    int32_t end_time = ST_NO_TIME;
+    int32_t headway_secs = 0;
+    int8_t exact_times = 0;
+    std::string feed_id;
+};
+
 struct Shape {
     double shape_pt_lat;
     double shape_pt_lon;
@@ -329,6 +345,8 @@ struct RealtimeParseResult {
     size_t trip_update_count = 0;
     size_t stop_time_update_count = 0;
     size_t vehicle_count = 0;
+    bool differential = false;
+    std::vector<std::string> tombstone_ids;
 };
 
 struct RealtimeStopTimeUpdate {
@@ -357,6 +375,7 @@ struct RealtimeTripUpdate {
     RealtimeVehicleDescriptor vehicle;
     std::vector<RealtimeStopTimeUpdate> stop_time_updates;
     uint64_t timestamp = 0;
+    bool has_timestamp = false;
     int delay = -2147483648;
     std::string feed_id;
     std::string source_id;
@@ -376,10 +395,12 @@ struct RealtimeVehiclePosition {
     RealtimeTripDescriptor trip;
     RealtimeVehicleDescriptor vehicle;
     RealtimePosition position;
+    bool has_position = false;
     int current_stop_sequence = -1;
     std::string stop_id;
     int current_status = -1;
     uint64_t timestamp = 0;
+    bool has_timestamp = false;
     int congestion_level = -1;
     int occupancy_status = -1;
     int occupancy_percentage = -1;
@@ -441,6 +462,7 @@ public:
 
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, Trip>> trips;
     std::vector<Transfer> transfers;
+    std::vector<Frequency> frequencies;
     // Secondary indexes keep common trip searches out of the full feed map.
     // Pointers are stable because unordered_map stores trips in node objects.
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, std::vector<const Trip*>>> trips_by_route_id;
@@ -559,6 +581,7 @@ public:
         static_occupancies_by_trip_id.clear();
         trips.clear();
         transfers.clear();
+        frequencies.clear();
         trips_by_route_id.clear();
         trips_by_service_id.clear();
         trips_by_block_id.clear();
@@ -585,6 +608,7 @@ public:
 		static_occupancies_by_trip_id.rehash(0);
 		trips.rehash(0);
 		transfers.shrink_to_fit();
+		frequencies.shrink_to_fit();
 		trips_by_route_id.rehash(0);
 		trips_by_service_id.rehash(0);
 		trips_by_block_id.rehash(0);
@@ -686,10 +710,10 @@ public:
 		return true;
 	}
 
-    // Compiled snapshot persistence (versioned, bounds-checked, atomic)
+    // Compiled snapshot persistence (versioned, checksummed, bounds-checked, atomic)
     bool saveCompiledSnapshot(const std::string& path, std::string& error) const;
     bool loadCompiledSnapshot(const std::string& path, std::string& error);
-    static uint32_t snapshotVersion() { return 2; }
+    static uint32_t snapshotVersion() { return 4; }
     static uint32_t snapshotArchHash();
 };
 

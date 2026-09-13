@@ -143,6 +143,12 @@ export interface GTFSFeedConfig {
     headers?: Record<string, string>;
     /** Path of a nested GTFS ZIP inside the downloaded archive. */
     archiveEntry?: string;
+    /**
+     * Ordered fallback URLs for the same archive. The primary `url` is tried
+     * first; each fallback is tried in order only when all earlier URLs fail.
+     * The same `headers` are sent to every URL.
+     */
+    fallbackUrls?: string[];
 }
 export interface GTFSStaticLoadResult {
     id: string;
@@ -165,6 +171,11 @@ export interface FetchedRealtimeSource {
     ok: boolean;
     data?: Buffer;
     error?: string;
+}
+/** Per-call overrides for the realtime fetch phase. */
+export interface RealtimeFetchOptions {
+    /** Total deadline for the aggregate fetch. Defaults to `realtimeTimeoutMs`/`requestTimeoutMs`. */
+    timeoutMs?: number;
 }
 export interface RealtimeChangedTrip {
     trip_id: string;
@@ -256,6 +267,14 @@ export interface StopTime {
     timepoint: number | null;
     continuous_pickup: ContinuousPickup | null;
     continuous_drop_off: ContinuousDropOff | null;
+    feed_id: string;
+}
+export interface Frequency {
+    trip_id: string;
+    start_time: number;
+    end_time: number;
+    headway_secs: number;
+    exact_times: 0 | 1;
     feed_id: string;
 }
 /** Compact feed-qualified scheduled extent for one trip. */
@@ -406,7 +425,7 @@ export interface RealtimeVehiclePosition {
         bearing: number | null;
         odometer: number | null;
         speed: number | null;
-    };
+    } | null;
     current_stop_sequence: number | null;
     stop_id: string;
     current_status: VehicleStopStatus | null;
@@ -508,6 +527,14 @@ export interface GTFSOptions {
     staleIfError?: boolean;
     /** Network request timeout. Defaults to 30 seconds. */
     requestTimeoutMs?: number;
+    /**
+     * Total deadline for one realtime aggregate fetch (`fetchRealtimeSources` /
+     * `updateRealtimeFromUrl`). Defaults to `requestTimeoutMs` when omitted.
+     * Per-request timeouts still apply; this bounds the whole aggregate.
+     */
+    realtimeTimeoutMs?: number;
+    /** Maximum accepted response body size. Defaults to 256 MiB. */
+    maxDownloadBytes?: number;
     mergeStrategy?: GTFSMergeStrategy;
     filesToLoad?: string[];
     skipStopTimes?: boolean;
