@@ -1384,7 +1384,7 @@ size_t parse_feed_info(GTFSData& data, const char* content_data, size_t content_
     return count;
 }
 
-void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, const std::vector<std::string>& feed_ids, int merge_strategy, LogFn log, ProgressFn progress, const std::vector<std::string>& files_to_load = {}) {
+void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, const std::vector<std::string>& feed_ids, int merge_strategy, LogFn log, ProgressFn progress, const std::vector<std::string>& files_to_load = {}, uint64_t max_zip_entry_bytes = MAX_ZIP_ENTRY_BYTES) {
     data.clear();
 
     std::unordered_map<uint64_t, std::vector<StopTime>> merged_stop_times;
@@ -1442,7 +1442,7 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
 
             size_t uncomp_size = static_cast<size_t>(file_stat.m_uncomp_size);
             const uint64_t compressed_size = static_cast<uint64_t>(file_stat.m_comp_size);
-            if (uncomp_size > MAX_ZIP_ENTRY_BYTES ||
+            if (uncomp_size > max_zip_entry_bytes ||
                 static_cast<uint64_t>(total_uncompressed_size) + uncomp_size > MAX_ZIP_TOTAL_BYTES ||
                 (uncomp_size > 0 && (compressed_size == 0 || uncomp_size / compressed_size > MAX_ZIP_COMPRESSION_RATIO))) {
                 mz_zip_reader_end(&zip_archive);

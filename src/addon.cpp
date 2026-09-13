@@ -113,8 +113,8 @@ class GTFSAddon;
 
 class GTFSWorker : public Napi::AsyncWorker {
 public:
-    GTFSWorker(Napi::Env env, std::vector<gtfs::BufferView>&& zipBuffers, std::vector<Napi::Reference<Napi::Buffer<unsigned char>>>&& bufferRefs, std::vector<std::string>&& feedIds, int mergeStrategy, std::shared_ptr<gtfs::GTFSData> newSnapshot, GTFSAddon* owner, Logger logger, std::vector<std::string>&& filesToLoad, uint64_t generation)
-        : Napi::AsyncWorker(env, "GTFSWorker"), deferred(Napi::Promise::Deferred::New(env)), zipBuffers(std::move(zipBuffers)), bufferRefs(std::move(bufferRefs)), feedIds(std::move(feedIds)), mergeStrategy(mergeStrategy), newSnapshot(std::move(newSnapshot)), owner(owner), logger(logger), filesToLoad(std::move(filesToLoad)), generation(generation) {}
+    GTFSWorker(Napi::Env env, std::vector<gtfs::BufferView>&& zipBuffers, std::vector<Napi::Reference<Napi::Buffer<unsigned char>>>&& bufferRefs, std::vector<std::string>&& feedIds, int mergeStrategy, std::shared_ptr<gtfs::GTFSData> newSnapshot, GTFSAddon* owner, Logger logger, std::vector<std::string>&& filesToLoad, uint64_t maxZipEntryBytes, uint64_t generation)
+        : Napi::AsyncWorker(env, "GTFSWorker"), deferred(Napi::Promise::Deferred::New(env)), zipBuffers(std::move(zipBuffers)), bufferRefs(std::move(bufferRefs)), feedIds(std::move(feedIds)), mergeStrategy(mergeStrategy), newSnapshot(std::move(newSnapshot)), owner(owner), logger(logger), filesToLoad(std::move(filesToLoad)), maxZipEntryBytes(maxZipEntryBytes), generation(generation) {}
 
     ~GTFSWorker() {
         if (logger.tsfn) {
@@ -161,7 +161,7 @@ public:
                 logger.progress_tsfn.NonBlockingCall(callback);
             };
 
-            gtfs::load_feeds(*newSnapshot, zipBuffers, feedIds, mergeStrategy, logCallback, progressCallback, filesToLoad);
+            gtfs::load_feeds(*newSnapshot, zipBuffers, feedIds, mergeStrategy, logCallback, progressCallback, filesToLoad, maxZipEntryBytes);
             // Validate immutable invariants before publishing; throw on failure to keep previous snapshot alive.
             std::string validationError;
             if (!newSnapshot->validate(validationError)) {
@@ -191,6 +191,7 @@ private:
     GTFSAddon* owner;
     Logger logger;
     std::vector<std::string> filesToLoad;
+    uint64_t maxZipEntryBytes;
     uint64_t generation;
     bool ownerReferenced = true;
 
@@ -515,10 +516,25 @@ Napi::Value GTFSAddon::LoadFromBuffers(const Napi::CallbackInfo& info) {
         }
     }
 
+    uint64_t maxZipEntryBytes = gtfs::MAX_ZIP_ENTRY_BYTES;
+    if (info.Length() > 7) {
+        if (!info[7].IsNumber()) {
+            Napi::TypeError::New(env, "Maximum extracted entry size must be a number").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        const double requestedLimit = info[7].As<Napi::Number>().DoubleValue();
+        if (!std::isfinite(requestedLimit) || requestedLimit < 1 ||
+            std::floor(requestedLimit) != requestedLimit || requestedLimit > gtfs::MAX_ZIP_TOTAL_BYTES) {
+            Napi::RangeError::New(env, "Maximum extracted entry size must be an integer between 1 byte and 512 MiB").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        maxZipEntryBytes = static_cast<uint64_t>(requestedLimit);
+    }
+
     auto newSnapshot = std::make_shared<gtfs::GTFSData>();
     const uint64_t generation = loadGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
     Ref();
-    auto worker = new GTFSWorker(env, std::move(zipBuffers), std::move(bufferRefs), std::move(feedIds), mergeStrategy, newSnapshot, this, logger, std::move(filesToLoad), generation);
+    auto worker = new GTFSWorker(env, std::move(zipBuffers), std::move(bufferRefs), std::move(feedIds), mergeStrategy, newSnapshot, this, logger, std::move(filesToLoad), maxZipEntryBytes, generation);
     worker->Queue();
     return worker->GetPromise();
 }

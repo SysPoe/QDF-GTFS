@@ -420,6 +420,7 @@ export class GTFS {
 	private requestTimeoutMs: number;
 	private realtimeTimeoutMs: number;
     private maxDownloadBytes: number;
+    private maxExtractedEntryBytes: number;
     private serviceDatesCache: Map<string, string[]> | null = null;
     private lastChangedTripIds: RealtimeChangedTrip[] = [];
     private lastRealtimeRevision: number = 0;
@@ -448,11 +449,16 @@ export class GTFS {
 		this.requestTimeoutMs = options?.requestTimeoutMs ?? 30_000;
 		this.realtimeTimeoutMs = options?.realtimeTimeoutMs ?? this.requestTimeoutMs;
         this.maxDownloadBytes = options?.maxDownloadBytes ?? 256 * 1024 * 1024;
+		this.maxExtractedEntryBytes = options?.maxExtractedEntryBytes ?? 128 * 1024 * 1024;
 		if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
 			throw new Error('requestTimeoutMs must be a positive finite number');
 		}
 		if (!Number.isFinite(this.realtimeTimeoutMs) || this.realtimeTimeoutMs <= 0) {
 			throw new Error('realtimeTimeoutMs must be a positive finite number');
+		}
+		if (!Number.isSafeInteger(this.maxExtractedEntryBytes) ||
+			this.maxExtractedEntryBytes <= 0 || this.maxExtractedEntryBytes > 512 * 1024 * 1024) {
+			throw new Error('maxExtractedEntryBytes must be an integer between 1 byte and 512 MiB');
 		}
     }
 
@@ -767,7 +773,16 @@ export class GTFS {
 
         // Try compiled warm path if cache enabled and caller is loadFromBuffers directly (e.g., tests)
         // We do not automatically try here to avoid double path; loadStatic already tried
-        return this.addonInstance.loadFromBuffers(buffers, this.mergeStrategy, this.logger, this.ansi, progressBridge, feedIds, effectiveFiles)
+        return this.addonInstance.loadFromBuffers(
+			buffers,
+			this.mergeStrategy,
+			this.logger,
+			this.ansi,
+			progressBridge,
+			feedIds,
+			effectiveFiles,
+			this.maxExtractedEntryBytes,
+		)
             .then((result: void) => {
                 this.serviceDatesCache = null;
                 return result;

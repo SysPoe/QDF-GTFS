@@ -535,6 +535,8 @@ export interface GTFSOptions {
     realtimeTimeoutMs?: number;
     /** Maximum accepted response body size. Defaults to 256 MiB. */
     maxDownloadBytes?: number;
+    /** Maximum uncompressed size of one GTFS ZIP entry. Defaults to 128 MiB. */
+    maxExtractedEntryBytes?: number;
     mergeStrategy?: GTFSMergeStrategy;
     filesToLoad?: string[];
     skipStopTimes?: boolean;

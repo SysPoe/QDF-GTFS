@@ -871,6 +871,12 @@ async function testAdversarialParserAndAtomicPublication() {
 	const good = createZip({ "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\ns,Good,-27,153\n" });
 	await gtfs.loadFromBuffers([good], ["good"]);
 
+	const bounded = new GTFS({ filesToLoad: ["stops.txt"], maxExtractedEntryBytes: 32 });
+	await assert.rejects(
+		bounded.loadFromBuffers([good], ["oversized"]),
+		/exceeds extraction limits/,
+	);
+
 	const malformedNumber = createZip({ "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\ns,Bad,-27oops,153\n" });
 	await assert.rejects(gtfs.loadFromBuffers([malformedNumber], ["bad"]), /floating-point/);
 	assert.deepEqual(gtfs.getStops().map((stop) => stop.stop_name), ["Good"]);

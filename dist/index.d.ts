@@ -27,6 +27,7 @@ export declare class GTFS {
     private requestTimeoutMs;
     private realtimeTimeoutMs;
     private maxDownloadBytes;
+    private maxExtractedEntryBytes;
     private serviceDatesCache;
     private lastChangedTripIds;
     private lastRealtimeRevision;
