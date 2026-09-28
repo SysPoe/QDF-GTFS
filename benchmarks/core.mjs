@@ -129,6 +129,7 @@ function createZip(files) {
 }
 
 function fixtureZip() {
+	const gtfsTime = (seconds) => `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 	const agency = "agency_id,agency_name,agency_url,agency_timezone\nbench,Benchmark Rail,https://benchmark.invalid,Australia/Brisbane\n";
 	const routes = "route_id,agency_id,route_short_name,route_long_name,route_type\nroute-0,bench,Benchmark,Benchmark Rail,2\n";
 	const stops = [
@@ -151,7 +152,7 @@ function fixtureZip() {
 		...Array.from({ length: TRIP_COUNT }, (_, tripIndex) =>
 			Array.from({ length: STOPS_PER_TRIP }, (_, stopIndex) => {
 				const seconds = 5 * 3600 + (tripIndex % 360) * 60 + stopIndex * 240;
-				return `trip-${String(tripIndex).padStart(5, "0")},${seconds},${seconds + 30},stop-${String(
+				return `trip-${String(tripIndex).padStart(5, "0")},${gtfsTime(seconds)},${gtfsTime(seconds + 30)},stop-${String(
 					tripIndex % STOP_COUNT,
 				).padStart(3, "0")},${stopIndex + 1},,0,0,1,${stopIndex * 1000}\n`;
 			}),
