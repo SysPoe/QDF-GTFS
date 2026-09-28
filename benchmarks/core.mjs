@@ -1,12 +1,15 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { deflateRawSync } from "node:zlib";
 
 import { GTFS } from "../dist/index.js";
 
 const TRIP_COUNT = Number.parseInt(process.env.QDF_BENCHMARK_TRIP_COUNT ?? "1200", 10);
+const COMPRESSED = process.env.QDF_BENCHMARK_COMPRESSED === "1";
 const STOPS_PER_TRIP = 20;
 const STOP_COUNT = 120;
 const FEED_ID = "benchmark-feed";
@@ -96,27 +99,30 @@ function createZip(files) {
 	for (const [filename, contents] of Object.entries(files)) {
 		const name = Buffer.from(filename);
 		const body = Buffer.from(contents);
+		const payload = COMPRESSED ? deflateRawSync(body) : body;
 		const checksum = crc32(body);
 		const local = Buffer.alloc(30);
 		local.writeUInt32LE(0x04034b50, 0);
 		local.writeUInt16LE(20, 4);
+		local.writeUInt16LE(COMPRESSED ? 8 : 0, 8);
 		local.writeUInt32LE(checksum, 14);
-		local.writeUInt32LE(body.length, 18);
+		local.writeUInt32LE(payload.length, 18);
 		local.writeUInt32LE(body.length, 22);
 		local.writeUInt16LE(name.length, 26);
-		localParts.push(local, name, body);
+		localParts.push(local, name, payload);
 
 		const central = Buffer.alloc(46);
 		central.writeUInt32LE(0x02014b50, 0);
 		central.writeUInt16LE(20, 4);
 		central.writeUInt16LE(20, 6);
+		central.writeUInt16LE(COMPRESSED ? 8 : 0, 10);
 		central.writeUInt32LE(checksum, 16);
-		central.writeUInt32LE(body.length, 20);
+		central.writeUInt32LE(payload.length, 20);
 		central.writeUInt32LE(body.length, 24);
 		central.writeUInt16LE(name.length, 28);
 		central.writeUInt32LE(localOffset, 42);
 		centralParts.push(central, name);
-		localOffset += local.length + name.length + body.length;
+		localOffset += local.length + name.length + payload.length;
 	}
 	const centralDirectory = Buffer.concat(centralParts);
 	const end = Buffer.alloc(22);
@@ -333,6 +339,28 @@ async function main() {
 				stopTimeCount: cached.getStopTimes().length,
 			},
 		});
+		const server = createServer((_request, response) => {
+			response.writeHead(200, { "content-type": "application/zip", "content-length": String(archive.length) });
+			response.end(archive);
+		});
+		await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+		try {
+			const uncachedLogs = [];
+			const uncached = new GTFS({ cache: false, logger: (message) => uncachedLogs.push({ at: performance.now(), message }), progress: () => {} });
+			const url = `http://127.0.0.1:${server.address().port}/feed.zip`;
+			const uncachedLoad = await measure(() => uncached.loadStatic({ id: FEED_ID, url }));
+			emitBenchmark({
+				repository: "QDF-GTFS",
+				category: "deterministic-local",
+				benchmark: "uncached-static-http-load",
+				...uncachedLoad.metrics,
+				details: { source: uncachedLoad.value[0]?.source, archiveBytes: archive.length,
+					tripCount: uncached.getTrips().length, stopTimeCount: uncached.getStopTimes().length,
+					...parseNativeTimings(uncachedLogs) },
+			});
+		} finally {
+			await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+		}
 
 		const logs = [];
 		const parsed = new GTFS({ logger: (message) => logs.push({ at: performance.now(), message }), progress: () => {} });

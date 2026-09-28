@@ -15,6 +15,7 @@
       },
       "sources": [
         "src/addon.cpp",
+        "src/fast_crc32.cpp",
         "src/snapshot.cpp",
         "src/miniz.c",
         "src/nanopb/pb_common.c",
@@ -25,7 +26,7 @@
         "<!@(node -p \"require('node-addon-api').include\")",
         "src"
       ],
-      'defines': [ 'NAPI_DISABLE_CPP_EXCEPTIONS', '_CRT_SECURE_NO_WARNINGS', 'NOMINMAX' ],
+      'defines': [ 'NAPI_DISABLE_CPP_EXCEPTIONS', '_CRT_SECURE_NO_WARNINGS', 'NOMINMAX', 'USE_EXTERNAL_MZCRC' ],
     }
   ]
 }

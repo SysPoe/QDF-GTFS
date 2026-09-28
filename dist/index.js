@@ -1061,17 +1061,28 @@ export class GTFS {
                 }
                 let current = 0;
                 const data = [];
+                let received = Number.isSafeInteger(total) && total > 0 ? Buffer.allocUnsafe(total) : null;
                 const startTime = Date.now();
                 this.lastProgressUpdate = 0;
                 this.lastProgressByTask.delete(taskName);
                 this.showProgress(taskName, 0, total, 0, 0);
                 res.on('data', (chunk) => {
+                    const previous = current;
                     current += chunk.length;
                     if (current > this.maxDownloadBytes) {
                         res.destroy(new Error(`Download exceeds ${this.maxDownloadBytes} byte limit`));
                         return;
                     }
-                    data.push(chunk);
+                    if (received && current <= received.length) {
+                        chunk.copy(received, previous);
+                    }
+                    else {
+                        if (received) {
+                            data.push(received.subarray(0, previous));
+                            received = null;
+                        }
+                        data.push(chunk);
+                    }
                     if (showProgressBar) {
                         const now = Date.now();
                         const elapsed = (now - startTime) / 1000;
@@ -1094,7 +1105,7 @@ export class GTFS {
                         if (this.ansi && process.stdout.isTTY)
                             process.stdout.write('\n');
                     }
-                    resolve(Buffer.concat(data));
+                    resolve(received ? received.subarray(0, current) : data.length === 1 ? data[0] : Buffer.concat(data, current));
                 });
             };
             try {

@@ -498,6 +498,50 @@ async function testTripStopTimeIndexAcrossFeeds() {
 	);
 }
 
+async function testQuotedTripAndStopTimeRows() {
+	const gtfs = new GTFS({ filesToLoad: ["trips.txt", "stop_times.txt"] });
+	await gtfs.loadFromBuffers([createZip({
+		"trips.txt":
+			"route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"route,service,\"trip,one\",\"North, via\nCentral\",1\n" +
+			"route,service,trip-two,South,0\n",
+		"stop_times.txt":
+			"trip_id,arrival_time,departure_time,stop_id,stop_sequence,shape_dist_traveled\n" +
+			"\"trip,one\",10:10:00,10:10:00,stop-b,2,2.5\n" +
+			"trip-two,09:00:00,09:00:00,stop-c,1,1e2\n" +
+			"\"trip,one\",10:00:00,10:00:00,stop-a,1,1.25\n",
+	})], ["quoted-feed"]);
+
+	assert.equal(gtfs.getTrips({ trip_id: "trip,one" })[0].trip_headsign, "North, via\nCentral");
+	assert.deepEqual(
+		gtfs.getStopTimes({ trip_id: "trip,one" }).map(({ stop_id, stop_sequence, shape_dist_traveled }) =>
+			({ stop_id, stop_sequence, shape_dist_traveled })),
+		[
+			{ stop_id: "stop-a", stop_sequence: 1, shape_dist_traveled: 1.25 },
+			{ stop_id: "stop-b", stop_sequence: 2, shape_dist_traveled: 2.5 },
+		],
+	);
+	assert.equal(gtfs.getStopTimes({ trip_id: "trip-two" })[0].shape_dist_traveled, 100);
+}
+
+async function testRepeatedStopTimeGroupsAfterGrowth() {
+	const header = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n";
+	const rows = Array.from({ length: 64 }, (_, index) =>
+		`trip-${index},08:00:00,08:00:00,stop-${index},1\n` +
+		`trip-${index},08:05:00,08:05:00,stop-${index},2\n`,
+	).join("");
+	const gtfs = new GTFS({ filesToLoad: ["stop_times.txt"] });
+	await gtfs.loadFromBuffers([createZip({
+		"stop_times.txt": header + rows + "trip-0,08:10:00,08:10:00,stop-0,3\n",
+	})], ["group-feed"]);
+	assert.equal(gtfs.getStopTimes().length, 129);
+	assert.deepEqual(
+		gtfs.getStopTimes({ trip_id: "trip-0" }).map(({ stop_sequence }) => stop_sequence),
+		[1, 2, 3],
+	);
+	assert.equal(gtfs.getStopTimes({ stop_id: "stop-63" }).length, 2);
+}
+
 async function testStopTimeOrderingAndIndexes() {
 	const header = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n";
 	const first = createZip({
@@ -1014,6 +1058,28 @@ function agencyZip(name: string): Buffer {
 	return createZip({ "agency.txt": `agency_name,agency_url,agency_timezone\n${name},https://example.invalid,Australia/Brisbane\n` });
 }
 
+async function testStaticDownloadBuffering() {
+	const zip = agencyZip("Split");
+	const server = createServer((request, response) => {
+		const headers: Record<string, string> = { "content-type": "application/zip" };
+		if (request.url === "/sized") headers["content-length"] = String(zip.length);
+		response.writeHead(200, headers);
+		response.write(zip.subarray(0, Math.floor(zip.length / 2)));
+		response.end(zip.subarray(Math.floor(zip.length / 2)));
+	});
+	const port = await listen(server);
+	try {
+		for (const mode of ["sized", "chunked"]) {
+			const gtfs = new GTFS({ filesToLoad: ["agency.txt"] });
+			const result = await gtfs.loadStatic({ id: mode, url: `http://127.0.0.1:${port}/${mode}` });
+			assert.equal(result[0].source, "network");
+			assert.equal(gtfs.getAgencies()[0].agency_name, "Split");
+		}
+	} finally {
+		await closeServer(server);
+	}
+}
+
 async function testStaticFallbackUrls() {
 	const fallbackZip = agencyZip("Fallback");
 	let primaryHits = 0;
@@ -1200,6 +1266,8 @@ await testSharedCalendarExpansionKeepsServiceExceptionsSeparate();
 await testShapeFiltersAndMergeStrategies();
 await testQualifiedIdentityAndRealtimeProvenance();
 await testTripStopTimeIndexAcrossFeeds();
+await testQuotedTripAndStopTimeRows();
+await testRepeatedStopTimeGroupsAfterGrowth();
 await testStopTimeOrderingAndIndexes();
 await testTripStopTimeBatchIndex();
 await testTripStopTimeBoundsAcrossFeeds();
@@ -1214,6 +1282,7 @@ await testParentStationExactMatchContract();
 await testCompiledSnapshotIntegrity();
 await testGenerationOwnershipAndMetadata();
 await testRedirectPolicy();
+await testStaticDownloadBuffering();
 await testStaticFallbackUrls();
 await testRealtimeAggregateDeadline();
 await testStaticCacheHeadersAndTempNaming();

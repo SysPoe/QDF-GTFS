@@ -92,7 +92,7 @@ function readRows(logs: string[], pattern: RegExp): number | null {
 async function benchmark(name: string, archive: Buffer, feedId: string) {
 	const logs: string[] = [];
 	const started = performance.now();
-	const gtfs = new GTFS({ logger: (message) => logs.push(message) });
+	const gtfs = new GTFS({ filesToLoad: ["stop_times.txt"], logger: (message) => logs.push(message) });
 	await gtfs.loadFromBuffers([archive], [feedId]);
 	const totalMs = performance.now() - started;
 	await new Promise<void>((resolve) => setImmediate(resolve));

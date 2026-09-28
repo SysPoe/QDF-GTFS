@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <cstdio>
 #include <functional>
-#include <thread>
 #include <future>
 #include <vector>
 #include <atomic>
@@ -133,6 +132,11 @@ int parse_int_view(const char* data, size_t len, int default_val = 0) {
 
 bool parse_double_view(const char* data, size_t len, double& out) {
     if (!data || len == 0) return false;
+    // Most GTFS numbers need no locale handling or temporary NUL-terminated string.
+    const auto parsed = std::from_chars(data, data + len, out);
+    if (parsed.ec == std::errc() && parsed.ptr == data + len && std::isfinite(out)) return true;
+
+    // Keep strtod's handling of surrounding spaces and unusual numeric forms.
     std::string buf(data, len);
     char* endp = nullptr;
     errno = 0;
@@ -467,45 +471,64 @@ size_t parse_trips(GTFSData& data, const char* content_data, size_t content_size
     const uint32_t feed_id_int = data.string_pool.intern(feed_id);
     auto& feed_trips = data.trips[feed_id_int];
     feed_trips.reserve(content_size / 80 + 16);
+    std::vector<std::string_view> fields;
+    fields.reserve(headers.size());
 
     size_t count = 0;
     while (ptr < end) {
         ptr = advance_line(ptr, end, line_start, line_len);
         bytes_read += line_len + 1;
         if (line_len == 0) { report_progress(bytes_read); continue; }
-        std::string line(line_start, line_len);
-        auto row = parse_csv_line(line);
+        fields.clear();
+        std::vector<std::string> quoted_fields;
+        if (memchr(line_start, '"', line_len)) {
+            quoted_fields = parse_csv_line(std::string(line_start, line_len));
+            for (const auto& field : quoted_fields) fields.emplace_back(field);
+        } else {
+            const char* field_start = line_start;
+            const char* line_end = line_start + line_len;
+            for (const char* current = line_start; current < line_end; ++current) {
+                if (*current == ',') {
+                    fields.emplace_back(field_start, static_cast<size_t>(current - field_start));
+                    field_start = current + 1;
+                }
+            }
+            fields.emplace_back(field_start, static_cast<size_t>(line_end - field_start));
+        }
+        const auto field = [&](int index) -> std::string_view {
+            return index >= 0 && static_cast<size_t>(index) < fields.size() ? fields[index] : std::string_view{};
+        };
+        const auto bounded_int = [&](int index, int minimum, int maximum, const char* name) {
+            const auto value = field(index);
+            const int parsed = parse_int_view(value.data(), value.size());
+            if (parsed < minimum || parsed > maximum) {
+                throw std::runtime_error(std::string(name) + " is out of range");
+            }
+            return parsed;
+        };
         Trip t;
         t.feed_id = feed_id_int;
-        std::string tmp;
-        const std::string route_id = get_val(row, route_id_idx);
-        const std::string service_id = get_val(row, service_id_idx);
-        const std::string trip_id = get_val(row, trip_id_idx);
+        const auto route_id = field(route_id_idx);
+        const auto service_id = field(service_id_idx);
+        const auto trip_id = field(trip_id_idx);
         if (route_id.empty() || service_id.empty() || trip_id.empty()) throw std::runtime_error("trips.txt contains an empty required ID");
         t.route_id = data.string_pool.intern(route_id);
         t.service_id = data.string_pool.intern(service_id);
         t.trip_id = data.string_pool.intern(trip_id);
-        tmp = get_val(row, headsign_idx);
-        if (!tmp.empty()) t.trip_headsign = data.string_pool.intern(tmp);
-        tmp = get_val(row, short_name_idx);
-        if (!tmp.empty()) t.trip_short_name = data.string_pool.intern(tmp);
-        tmp = get_val(row, direction_id_idx);
-        if (!tmp.empty()) t.direction_id = static_cast<int32_t>(get_bounded_int(row, direction_id_idx, 0, 0, 1, "direction_id"));
-        tmp = get_val(row, block_id_idx);
-        if (!tmp.empty()) t.block_id = data.string_pool.intern(tmp);
-        tmp = get_val(row, shape_id_idx);
-        if (!tmp.empty()) t.shape_id = data.string_pool.intern(tmp);
-        tmp = get_val(row, wheelchair_idx);
-        if (!tmp.empty()) t.wheelchair_accessible = static_cast<int32_t>(get_bounded_int(row, wheelchair_idx, 0, 0, 2, "wheelchair_accessible"));
-        tmp = get_val(row, bikes_idx);
-        if (!tmp.empty()) t.bikes_allowed = static_cast<int32_t>(get_bounded_int(row, bikes_idx, 0, 0, 2, "bikes_allowed"));
+        if (const auto value = field(headsign_idx); !value.empty()) t.trip_headsign = data.string_pool.intern(value);
+        if (const auto value = field(short_name_idx); !value.empty()) t.trip_short_name = data.string_pool.intern(value);
+        if (!field(direction_id_idx).empty()) t.direction_id = bounded_int(direction_id_idx, 0, 1, "direction_id");
+        if (const auto value = field(block_id_idx); !value.empty()) t.block_id = data.string_pool.intern(value);
+        if (const auto value = field(shape_id_idx); !value.empty()) t.shape_id = data.string_pool.intern(value);
+        if (!field(wheelchair_idx).empty()) t.wheelchair_accessible = bounded_int(wheelchair_idx, 0, 2, "wheelchair_accessible");
+        if (!field(bikes_idx).empty()) t.bikes_allowed = bounded_int(bikes_idx, 0, 2, "bikes_allowed");
 
         if (merge_strategy == 1 && feed_trips.count(t.trip_id)) continue;
         if (merge_strategy == 2 && feed_trips.count(t.trip_id)) {
             throw std::runtime_error("Duplicate trip: " + data.string_pool.get(t.trip_id));
         }
 
-        feed_trips[t.trip_id] = t;
+        feed_trips.insert_or_assign(t.trip_id, std::move(t));
         count++;
         report_progress(bytes_read);
     }
@@ -772,8 +795,8 @@ size_t parse_stops(GTFSData& data, const char* content_data, size_t content_size
 }
 
 
-// Updated to output to a specific vector, useful for multithreading
-size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t length, const std::vector<std::string>& headers, uint32_t feed_id, std::vector<StopTime>& out_vec, const std::function<void(size_t)>& on_progress = nullptr) {
+// Group rows while parsing so a second full-size vector is not held during merge.
+size_t parse_stop_times_rows(StringPool& string_pool, const char* start, size_t length, const std::vector<std::string>& headers, uint32_t feed_id, std::unordered_map<uint32_t, std::vector<StopTime>>& out_groups, const std::function<void(size_t)>& on_progress = nullptr) {
     require_columns(headers, {"trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence"}, "stop_times.txt");
     int trip_id_idx = get_col_index(headers, "trip_id");
     int arrival_idx = get_col_index(headers, "arrival_time");
@@ -803,6 +826,20 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
 
     const char* ptr = start;
     const char* end = start + length;
+    std::string_view last_trip_view;
+    std::string_view last_stop_view;
+    uint32_t last_trip_id = 0;
+    uint32_t last_stop_id = 0;
+    uint32_t last_group_trip_id = 0;
+    // unordered_map keeps element addresses stable when its buckets grow.
+    std::vector<StopTime>* last_group = nullptr;
+    auto append_stop_time = [&](StopTime&& stop_time) {
+        if (!last_group || last_group_trip_id != stop_time.trip_id) {
+            last_group_trip_id = stop_time.trip_id;
+            last_group = &out_groups[stop_time.trip_id];
+        }
+        last_group->push_back(std::move(stop_time));
+    };
 
     size_t count = 0;
     while (ptr < end) {
@@ -822,8 +859,7 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
             continue;
         }
 
-        const void* quote_pos = memchr(line_start, '"', parse_len);
-        if (quote_pos) {
+        if (memchr(line_start, '"', parse_len)) {
             // Quoted path: fall back to string-based CSV parser
             std::string line(line_start, parse_len);
             auto row_str = parse_csv_line(line);
@@ -834,6 +870,7 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
             const std::string stop_id = get_val(row_str, stop_id_idx);
             if (trip_id.empty() || stop_id.empty()) throw std::runtime_error("stop_times.txt contains an empty required ID");
             st.trip_id = string_pool.intern(trip_id);
+            last_trip_view = {};
             {
                 int t = parse_time_seconds(get_val(row_str, arrival_idx));
                 st.arrival_time = (t != -1) ? static_cast<int32_t>(t) : ST_NO_TIME;
@@ -843,6 +880,7 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
                 st.departure_time = (t != -1) ? static_cast<int32_t>(t) : ST_NO_TIME;
             }
             st.stop_id = string_pool.intern(stop_id);
+            last_stop_view = {};
             if (get_val(row_str, seq_idx).empty()) throw std::runtime_error("stop_times.txt contains an empty stop_sequence");
             st.stop_sequence = get_bounded_int(row_str, seq_idx, 0, 0, std::numeric_limits<int>::max(), "stop_sequence");
             {
@@ -870,7 +908,7 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
                 const std::string& cdv = get_val(row_str, cont_drop_off_idx);
                 st.continuous_drop_off = cdv.empty() ? ST_NO_INT8 : static_cast<int8_t>(get_bounded_int(row_str, cont_drop_off_idx, 0, 0, 3, "continuous_drop_off"));
             }
-            out_vec.push_back(st);
+            append_stop_time(std::move(st));
             count++;
             report_progress(bytes_read);
             continue;
@@ -899,7 +937,12 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
         // Zero-copy intern: uses intern(const char*, size_t) to avoid std::string allocation
         auto trip_view = get_view(trip_id_idx);
         if (!trip_view.first || trip_view.second == 0) throw std::runtime_error("stop_times.txt contains an empty trip_id");
-        st.trip_id = string_pool.intern(trip_view.first, trip_view.second);
+        const std::string_view trip_text(trip_view.first, trip_view.second);
+        if (trip_text != last_trip_view) {
+            last_trip_id = string_pool.intern(trip_text);
+            last_trip_view = trip_text;
+        }
+        st.trip_id = last_trip_id;
 
         auto arrival_view = get_view(arrival_idx);
         {
@@ -914,7 +957,12 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
 
         auto stop_view = get_view(stop_id_idx);
         if (!stop_view.first || stop_view.second == 0) throw std::runtime_error("stop_times.txt contains an empty stop_id");
-        st.stop_id = string_pool.intern(stop_view.first, stop_view.second);
+        const std::string_view stop_text(stop_view.first, stop_view.second);
+        if (stop_text != last_stop_view) {
+            last_stop_id = string_pool.intern(stop_text);
+            last_stop_view = stop_text;
+        }
+        st.stop_id = last_stop_id;
 
         auto seq_view = get_view(seq_idx);
         if (!seq_view.first || seq_view.second == 0) throw std::runtime_error("stop_times.txt contains an empty stop_sequence");
@@ -962,7 +1010,7 @@ size_t parse_stop_times_chunk(StringPool& string_pool, const char* start, size_t
             st.continuous_drop_off = static_cast<int8_t>(value);
         }
 
-        out_vec.push_back(st);
+        append_stop_time(std::move(st));
         count++;
         report_progress(bytes_read);
     }
@@ -1568,74 +1616,17 @@ void load_feeds(GTFSData& data, const std::vector<BufferView>& zip_buffers, cons
 
                 size_t data_size = content_size - start_pos;
 
-                // Cap thread count at eight and avoid spawning one task per
-                // tiny fixture/file. Large stop_times files still use the
-                // available workers, with roughly 256 KiB per chunk.
-                unsigned int thread_count = std::thread::hardware_concurrency();
-                if (thread_count == 0) thread_count = 4;
-                if (thread_count > 8) thread_count = 8;
-                if (memchr(content_data + start_pos, '"', data_size)) thread_count = 1;
-                constexpr size_t TARGET_CHUNK_BYTES = 256 * 1024;
-                const size_t size_based_threads = std::max<size_t>(
-                    1, (data_size + TARGET_CHUNK_BYTES - 1) / TARGET_CHUNK_BYTES);
-                thread_count = static_cast<unsigned int>(std::min<size_t>(thread_count, size_based_threads));
-
-                size_t chunk_size = (data_size + thread_count - 1) / thread_count;
-
-                std::vector<std::future<std::vector<StopTime>>> chunk_futures;
-                size_t current_pos = start_pos;
-
-                for (unsigned int i = 0; i < thread_count; ++i) {
-                    if (current_pos >= content_size) break;
-
-                    size_t end_pos = (i == thread_count - 1)
-                        ? content_size
-                        : std::min(content_size, current_pos + chunk_size);
-                    if (end_pos < content_size) {
-                        // Advance to the next newline boundary.
-                        const char* search_start = content_data + end_pos;
-                        size_t remaining = content_size - end_pos;
-                        const char* next_nl = static_cast<const char*>(memchr(search_start, '\n', remaining));
-                        end_pos = next_nl ? static_cast<size_t>(next_nl - content_data) + 1 : content_size;
-                    }
-
-                    if (end_pos <= current_pos) {
-                        end_pos = content_size;
-                    }
-
-                    size_t len = end_pos - current_pos;
-                    const char* ptr = content_data + current_pos;
-
-                    chunk_futures.push_back(std::async(std::launch::async,
-                        [ptr, len, headers, &data, &processed_bytes, progress, total_uncompressed_size, current_feed_id, current_feed_id_int]() {
-                            std::vector<StopTime> vec;
-                            vec.reserve(len / 50);
-
-                            auto chunk_progress = [&](size_t delta_bytes) {
-                                int64_t current = processed_bytes.fetch_add(static_cast<int64_t>(delta_bytes)) + static_cast<int64_t>(delta_bytes);
-                                if (progress) {
-                                    if (current > total_uncompressed_size) current = total_uncompressed_size;
-                                    progress("Loading GTFS Data (Feed " + current_feed_id + ")", current, total_uncompressed_size);
-                                }
-                            };
-
-                            parse_stop_times_chunk(data.string_pool, ptr, len, headers, current_feed_id_int, vec, chunk_progress);
-                            return vec;
-                        }
-                    ));
-                    current_pos = end_pos;
-                }
-
                 std::unordered_map<uint32_t, std::vector<StopTime>> current_feed_stop_times;
-                size_t total_count = 0;
-
-                for (auto& f : chunk_futures) {
-                    auto chunk_vec = f.get();
-                    total_count += chunk_vec.size();
-                    for (auto& st : chunk_vec) {
-                        current_feed_stop_times[st.trip_id].push_back(std::move(st));
+                auto stop_times_progress = [&](size_t delta_bytes) {
+                    int64_t current = processed_bytes.fetch_add(static_cast<int64_t>(delta_bytes)) + static_cast<int64_t>(delta_bytes);
+                    if (progress) {
+                        if (current > total_uncompressed_size) current = total_uncompressed_size;
+                        progress("Loading GTFS Data (Feed " + current_feed_id + ")", current, total_uncompressed_size);
                     }
-                }
+                };
+                const size_t total_count = parse_stop_times_rows(
+                    data.string_pool, content_data + start_pos, data_size, headers,
+                    current_feed_id_int, current_feed_stop_times, stop_times_progress);
 
                 for (auto& [tid, vec] : current_feed_stop_times) {
                     const uint64_t qualified_id = (static_cast<uint64_t>(current_feed_id_int) << 32) | tid;
