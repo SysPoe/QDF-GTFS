@@ -14,7 +14,7 @@ import {
     RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, ProgressInfo,
     GTFSMergeStrategy, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId,
     RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes, RealtimeChangedTrip, FetchedRealtimeSource,
-    RealtimeFetchOptions
+    RealtimeFetchOptions, PackedShapes
 } from './types.js';
 
 export * from './types.js';
@@ -61,6 +61,10 @@ try {
                     getTransfers() { return []; }
                     getFrequencies() { return []; }
                     getShapes() { return []; }
+                    getShapesPacked() {
+                        return { latitudes: new Float64Array(), longitudes: new Float64Array(),
+                            sequences: new Int32Array(), shapeDistances: new Float64Array() };
+                    }
                     getCalendars() { return []; }
                     getCalendarDates() { return []; }
                     updateRealtime() {
@@ -957,6 +961,10 @@ export class GTFS {
 
     getShapes(filter?: Partial<Shape>): Shape[] {
         return this.addonInstance.getShapes(filter);
+    }
+
+    getShapesPacked(filter?: Partial<Pick<Shape, 'feed_id' | 'shape_id'>>): PackedShapes {
+        return this.addonInstance.getShapesPacked(filter);
     }
 
     getCalendars(filter?: Partial<Calendar>): Calendar[] {

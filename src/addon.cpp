@@ -272,6 +272,7 @@ private:
     Napi::Value GetTransfers(const Napi::CallbackInfo& info);
     Napi::Value GetFrequencies(const Napi::CallbackInfo& info);
     Napi::Value GetShapes(const Napi::CallbackInfo& info);
+    Napi::Value GetShapesPacked(const Napi::CallbackInfo& info);
     Napi::Value GetCalendars(const Napi::CallbackInfo& info);
     Napi::Value GetCalendarDates(const Napi::CallbackInfo& info);
     Napi::Value GetRealtimeTripUpdates(const Napi::CallbackInfo& info);
@@ -406,6 +407,7 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("getTransfers", &GTFSAddon::GetTransfers),
         InstanceMethod("getFrequencies", &GTFSAddon::GetFrequencies),
         InstanceMethod("getShapes", &GTFSAddon::GetShapes),
+        InstanceMethod("getShapesPacked", &GTFSAddon::GetShapesPacked),
         InstanceMethod("getCalendars", &GTFSAddon::GetCalendars),
         InstanceMethod("getCalendarDates", &GTFSAddon::GetCalendarDates),
         InstanceMethod("getRealtimeTripUpdates", &GTFSAddon::GetRealtimeTripUpdates),
@@ -2096,6 +2098,58 @@ Napi::Value GTFSAddon::GetShapes(const Napi::CallbackInfo& info) {
         }
     }
     return arr;
+}
+
+Napi::Value GTFSAddon::GetShapesPacked(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto snapshot = getSnapshot(); auto& data = *snapshot;
+    Napi::Object filter;
+    const bool has_filter = info.Length() > 0 && info[0].IsObject();
+    if (has_filter) filter = info[0].As<Napi::Object>();
+    const bool has_shape_id = has_filter && filter.Has("shape_id");
+    const bool has_feed_id = has_filter && filter.Has("feed_id");
+    const uint32_t shape_id = has_shape_id
+        ? data.string_pool.get_id(filter.Get("shape_id").As<Napi::String>().Utf8Value()) : 0xFFFFFFFF;
+    const uint32_t feed_id = has_feed_id
+        ? data.string_pool.get_id(filter.Get("feed_id").As<Napi::String>().Utf8Value()) : 0xFFFFFFFF;
+
+    const auto ranges_it = data.shape_ranges_by_id.find(shape_id);
+    const bool known = (!has_shape_id || ranges_it != data.shape_ranges_by_id.end()) &&
+        (!has_feed_id || feed_id != 0xFFFFFFFF);
+    const auto matching = [&](auto visit) {
+        if (!known) return;
+        const auto visit_range = [&](size_t begin, size_t end) {
+            for (size_t index = begin; index < end; ++index) {
+                const auto& shape = data.shapes[index];
+                if (!has_feed_id || shape.feed_id == feed_id) visit(shape);
+            }
+        };
+        if (has_shape_id) {
+            for (const auto& [begin, end] : ranges_it->second) visit_range(begin, end);
+        } else {
+            visit_range(0, data.shapes.size());
+        }
+    };
+    size_t count = 0;
+    matching([&](const auto&) { ++count; });
+    auto latitudes = Napi::Float64Array::New(env, count);
+    auto longitudes = Napi::Float64Array::New(env, count);
+    auto sequences = Napi::Int32Array::New(env, count);
+    auto shape_distances = Napi::Float64Array::New(env, count);
+    size_t index = 0;
+    matching([&](const auto& shape) {
+        latitudes[index] = shape.shape_pt_lat;
+        longitudes[index] = shape.shape_pt_lon;
+        sequences[index] = shape.shape_pt_sequence;
+        shape_distances[index] = shape.shape_dist_traveled;
+        ++index;
+    });
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("latitudes", latitudes);
+    result.Set("longitudes", longitudes);
+    result.Set("sequences", sequences);
+    result.Set("shapeDistances", shape_distances);
+    return result;
 }
 
 Napi::Value GTFSAddon::GetCalendars(const Napi::CallbackInfo& info) {

@@ -1,4 +1,4 @@
-import { Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Frequency, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes, RealtimeChangedTrip, FetchedRealtimeSource, RealtimeFetchOptions } from './types.js';
+import { Agency, Route, Stop, StopTime, TripStopTimeBounds, FeedInfo, Trip, Transfer, Frequency, Shape, Calendar, CalendarDate, RealtimeTripUpdate, RealtimeVehiclePosition, RealtimeAlert, StopTimeQuery, TripQuery, GTFSOptions, GTFSFeedConfig, GTFSRealtimeFeedConfig, GTFSStaticLoadResult, GTFSRealtimeLoadResult, GTFSRealtimeUpdateResult, GTFSActions, QualifiedEntityId, RealtimeFilter, TransferQuery, StaticOccupancy, StaticOccupancyQuery, PackedStopTimes, RealtimeChangedTrip, FetchedRealtimeSource, RealtimeFetchOptions, PackedShapes } from './types.js';
 export * from './types.js';
 /**
  * Decode carriage details from a standalone vehicle feed.
@@ -76,6 +76,7 @@ export declare class GTFS {
         feed_id?: string;
     }): Frequency[];
     getShapes(filter?: Partial<Shape>): Shape[];
+    getShapesPacked(filter?: Partial<Pick<Shape, 'feed_id' | 'shape_id'>>): PackedShapes;
     getCalendars(filter?: Partial<Calendar>): Calendar[];
     getCalendarDates(filter?: Partial<CalendarDate>): CalendarDate[];
     getServiceDates(service: QualifiedEntityId): string[];

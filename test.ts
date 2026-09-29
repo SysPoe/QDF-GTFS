@@ -142,6 +142,29 @@ async function testShapeFiltersAndMergeStrategies() {
 	);
 	assert.deepEqual(overwrite.getShapes({ shape_id: "missing" }), []);
 	assert.deepEqual(overwrite.getShapes({ feed_id: "missing" }), []);
+	for (const filter of [
+		{ shape_id: "shared", feed_id: "feed-a" },
+		{ shape_id: "shared" },
+		{ feed_id: "feed-b" },
+		{ shape_id: "missing" },
+	]) {
+		const packed = overwrite.getShapesPacked(filter);
+		const objects = overwrite.getShapes(filter);
+		assert.deepEqual(
+			Array.from(packed.latitudes, (latitude, index) => ({
+				latitude,
+				longitude: packed.longitudes[index],
+				sequence: packed.sequences[index],
+				distance: Number.isNaN(packed.shapeDistances[index]) ? null : packed.shapeDistances[index],
+			})),
+			objects.map((shape) => ({
+				latitude: shape.shape_pt_lat,
+				longitude: shape.shape_pt_lon,
+				sequence: shape.shape_pt_sequence,
+				distance: shape.shape_dist_traveled,
+			})),
+		);
+	}
 
 	const ignore = new GTFS({
 		filesToLoad: ["shapes.txt"],

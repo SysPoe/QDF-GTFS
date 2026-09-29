@@ -343,6 +343,13 @@ export interface Shape {
     shape_dist_traveled: number | null;
     feed_id: string;
 }
+/** Columnar shape points; NaN represents a missing shape distance. */
+export interface PackedShapes {
+    latitudes: Float64Array;
+    longitudes: Float64Array;
+    sequences: Int32Array;
+    shapeDistances: Float64Array;
+}
 export interface Calendar {
     service_id: string;
     monday: boolean;

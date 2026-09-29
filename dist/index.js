@@ -52,6 +52,10 @@ try {
                 getTransfers() { return []; }
                 getFrequencies() { return []; }
                 getShapes() { return []; }
+                getShapesPacked() {
+                    return { latitudes: new Float64Array(), longitudes: new Float64Array(),
+                        sequences: new Int32Array(), shapeDistances: new Float64Array() };
+                }
                 getCalendars() { return []; }
                 getCalendarDates() { return []; }
                 updateRealtime() {
@@ -909,6 +913,9 @@ export class GTFS {
     }
     getShapes(filter) {
         return this.addonInstance.getShapes(filter);
+    }
+    getShapesPacked(filter) {
+        return this.addonInstance.getShapesPacked(filter);
     }
     getCalendars(filter) {
         return this.addonInstance.getCalendars(filter);
