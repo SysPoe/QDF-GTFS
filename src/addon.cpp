@@ -161,11 +161,22 @@ public:
                 logger.progress_tsfn.NonBlockingCall(callback);
             };
 
-            gtfs::load_feeds(*newSnapshot, zipBuffers, feedIds, mergeStrategy, logCallback, progressCallback, filesToLoad, maxZipEntryBytes);
+            if (compiledLoadPath.empty()) {
+                gtfs::load_feeds(*newSnapshot, zipBuffers, feedIds, mergeStrategy, logCallback, progressCallback, filesToLoad, maxZipEntryBytes);
+            } else {
+                std::string error;
+                if (!newSnapshot->loadCompiledSnapshot(compiledLoadPath, error)) throw std::runtime_error(error);
+            }
             // Validate immutable invariants before publishing; throw on failure to keep previous snapshot alive.
             std::string validationError;
             if (!newSnapshot->validate(validationError)) {
                 throw std::runtime_error(validationError);
+            }
+            if (!compiledSavePath.empty()) {
+                // Save the private candidate before publication or stop actions.
+                // A cache write failure must not reject a healthy timetable.
+                std::string error;
+                if (!newSnapshot->saveCompiledSnapshot(compiledSavePath, error)) logCallback("Compiled cache write failed: " + error);
             }
         } catch (const std::exception& e) {
             SetError(e.what());
@@ -173,6 +184,11 @@ public:
     }
 
     void OnOK() override;
+
+    // Compiled loads use the same generation gating and realtime publication
+    // as ZIP loads, while keeping disk I/O and validation off the Node thread.
+    void SetCompiledLoad(std::string path) { compiledLoadPath = std::move(path); }
+    void SetCompiledSave(std::string path) { compiledSavePath = std::move(path); }
     void OnError(const Napi::Error& e) override {
         ReleaseBufferRefs();
         deferred.Reject(e.Value());
@@ -194,6 +210,8 @@ private:
     uint64_t maxZipEntryBytes;
     uint64_t generation;
     bool ownerReferenced = true;
+    std::string compiledLoadPath;
+    std::string compiledSavePath;
 
     void ReleaseBufferRefs() {
         if (bufferRefs.empty()) return;
@@ -287,6 +305,7 @@ private:
     Napi::Value GetStaticSnapshotInfo(const Napi::CallbackInfo& info);
     Napi::Value SaveCompiledSnapshot(const Napi::CallbackInfo& info);
     Napi::Value LoadCompiledSnapshot(const Napi::CallbackInfo& info);
+    Napi::Value LoadCompiledSnapshotAsync(const Napi::CallbackInfo& info);
 
 
 
@@ -421,7 +440,8 @@ Napi::Object GTFSAddon::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("getSnapshotRevision", &GTFSAddon::GetSnapshotRevision),
         InstanceMethod("getStaticSnapshotInfo", &GTFSAddon::GetStaticSnapshotInfo),
         InstanceMethod("saveCompiledSnapshot", &GTFSAddon::SaveCompiledSnapshot),
-        InstanceMethod("loadCompiledSnapshot", &GTFSAddon::LoadCompiledSnapshot)
+        InstanceMethod("loadCompiledSnapshot", &GTFSAddon::LoadCompiledSnapshot),
+        InstanceMethod("loadCompiledSnapshotAsync", &GTFSAddon::LoadCompiledSnapshotAsync)
     });
 
 
@@ -537,6 +557,7 @@ Napi::Value GTFSAddon::LoadFromBuffers(const Napi::CallbackInfo& info) {
     const uint64_t generation = loadGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
     Ref();
     auto worker = new GTFSWorker(env, std::move(zipBuffers), std::move(bufferRefs), std::move(feedIds), mergeStrategy, newSnapshot, this, logger, std::move(filesToLoad), maxZipEntryBytes, generation);
+    if (info.Length() > 8 && info[8].IsString()) worker->SetCompiledSave(info[8].As<Napi::String>().Utf8Value());
     worker->Queue();
     return worker->GetPromise();
 }
@@ -653,6 +674,8 @@ Napi::Value GTFSAddon::GetRoutes(const Napi::CallbackInfo& info) {
                 const auto& r = data.routes.at(feed_id_filter).at(id);
                 if (check_route(r)) matches.push_back(&r);
             }
+        } else if (!data.compiled_route_order.empty()) {
+            for (const auto* route : data.compiled_route_order) if (route->route_id == id && check_route(*route)) matches.push_back(route);
         } else {
             for (const auto& [fid, feed_map] : data.routes) {
                 if (feed_map.count(id)) {
@@ -660,6 +683,11 @@ Napi::Value GTFSAddon::GetRoutes(const Napi::CallbackInfo& info) {
                     if (check_route(r)) matches.push_back(&r);
                 }
             }
+        }
+    } else if (!data.compiled_route_order.empty()) {
+        for (const auto* route : data.compiled_route_order) {
+            if (has_feed_id_filter && route->feed_id != feed_id_filter) continue;
+            if (check_route(*route)) matches.push_back(route);
         }
     } else {
         for (const auto& [fid, feed_map] : data.routes) {
@@ -1908,6 +1936,12 @@ Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
                 const auto& t = data.trips.at(f_feed_id_int).at(f_trip_id_int);
                 if (check_trip(t)) matches.push_back(&t);
             }
+        } else if (!data.compiled_trip_feed_order.empty()) {
+            for (uint32_t feed_id : data.compiled_trip_feed_order) {
+                const auto& feed_map = data.trips.at(feed_id);
+                auto it = feed_map.find(f_trip_id_int);
+                if (it != feed_map.end() && check_trip(it->second)) matches.push_back(&it->second);
+            }
         } else {
             for (const auto& [fid, feed_map] : data.trips) {
                 if (feed_map.count(f_trip_id_int)) {
@@ -1939,6 +1973,8 @@ Napi::Value GTFSAddon::GetTrips(const Napi::CallbackInfo& info) {
             collect_indexed(data.trips_by_route_id, f_route_id_int);
         } else if (has_service_id) {
             collect_indexed(data.trips_by_service_id, f_service_id_int);
+        } else if (!data.compiled_trip_order.empty()) {
+            for (const auto* trip : data.compiled_trip_order) if (check_trip(*trip)) matches.push_back(trip);
         } else {
             for (const auto& [fid, feed_map] : data.trips) {
                 if (has_feed_id && fid != f_feed_id_int) continue;
@@ -2612,6 +2648,21 @@ Napi::Value GTFSAddon::LoadCompiledSnapshot(const Napi::CallbackInfo& info) {
     loadGeneration.fetch_add(1, std::memory_order_acq_rel);
     publishSnapshot(newSnapshot);
     return env.Undefined();
+}
+
+Napi::Value GTFSAddon::LoadCompiledSnapshotAsync(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "path string expected").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    auto newSnapshot = std::make_shared<gtfs::GTFSData>();
+    const uint64_t generation = loadGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    Ref();
+    auto worker = new GTFSWorker(env, {}, {}, {}, 0, newSnapshot, this, {}, {}, gtfs::MAX_ZIP_ENTRY_BYTES, generation);
+    worker->SetCompiledLoad(info[0].As<Napi::String>().Utf8Value());
+    worker->Queue();
+    return worker->GetPromise();
 }
 
 NODE_API_MODULE(gtfs_addon, Init)

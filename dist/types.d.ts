@@ -528,6 +528,8 @@ export interface GTFSOptions {
     ansi?: boolean;
     cacheDir?: string;
     cache?: boolean;
+    /** Reuse validated binary static snapshots for cached archives. Defaults to false. */
+    compiledCache?: boolean;
     /** Maximum age of a static feed before revalidation. Defaults to 24 hours. */
     cacheMaxAgeMs?: number;
     /** Continue with an expired static cache when its source is unavailable. Defaults to true. */

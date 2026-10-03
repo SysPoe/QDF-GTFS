@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <random>
 #include <unistd.h>
+#include "miniz.h"
 
 namespace gtfs {
 
@@ -50,20 +51,7 @@ static bool readU8(std::istream& is, uint8_t& v) { is.read(reinterpret_cast<char
 
 // CRC32-IEEE (polynomial 0xEDB88320) over snapshot body bytes.
 static uint32_t crc32Update(uint32_t crc, const char* data, size_t size) {
-    static uint32_t table[256];
-    static bool initialized = false;
-    if (!initialized) {
-        for (uint32_t i = 0; i < 256; ++i) {
-            uint32_t c = i;
-            for (int b = 0; b < 8; ++b) c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
-            table[i] = c;
-        }
-        initialized = true;
-    }
-    for (size_t i = 0; i < size; ++i) {
-        crc = table[(crc ^ static_cast<unsigned char>(data[i])) & 0xFF] ^ (crc >> 8);
-    }
-    return crc;
+    return ~static_cast<uint32_t>(mz_crc32(~crc, reinterpret_cast<const unsigned char*>(data), size));
 }
 
 static bool crc32FileBody(const std::string& path, uint64_t bodyOffset, uint64_t bodySize, uint32_t& out, std::string& error) {
@@ -235,9 +223,7 @@ bool GTFSData::saveCompiledSnapshot(const std::string& path, std::string& error)
         }
         // Routes
         writeU32(os, hdr.routeCount);
-        for (auto &feedKV : routes) {
-            for (auto &rKV : feedKV.second) {
-                const Route &r = rKV.second;
+        const auto writeRoute = [&](const Route &r) {
                 writeString(os, r.feed_id);
                 writeString(os, r.route_id);
                 writeOptionalString(os, r.agency_id);
@@ -253,7 +239,11 @@ bool GTFSData::saveCompiledSnapshot(const std::string& path, std::string& error)
                 has = r.continuous_drop_off.has_value()?1:0; writeU8(os,has); if (has) writeI32(os,*r.continuous_drop_off);
                 has = r.route_sort_order.has_value()?1:0; writeU8(os,has); if (has) writeI32(os,*r.route_sort_order);
                 writeOptionalString(os, r.network_id);
-            }
+        };
+        if (!compiled_route_order.empty()) {
+            for (const auto* route : compiled_route_order) writeRoute(*route);
+        } else {
+            for (const auto& feedKV : routes) for (const auto& rKV : feedKV.second) writeRoute(rKV.second);
         }
         // Stops
         writeU32(os, hdr.stopCount);
@@ -285,10 +275,11 @@ bool GTFSData::saveCompiledSnapshot(const std::string& path, std::string& error)
         }
         // Trips (raw POD)
         writeU32(os, hdr.tripCount);
-        for (auto &feedKV : trips) {
-            for (auto &tKV : feedKV.second) {
-                const Trip &t = tKV.second;
-                os.write(reinterpret_cast<const char*>(&t), sizeof(Trip));
+        if (!compiled_trip_order.empty()) {
+            for (const auto* trip : compiled_trip_order) os.write(reinterpret_cast<const char*>(trip), sizeof(Trip));
+        } else {
+            for (const auto& feedKV : trips) for (const auto& tKV : feedKV.second) {
+                os.write(reinterpret_cast<const char*>(&tKV.second), sizeof(Trip));
             }
         }
         // Transfers
@@ -496,7 +487,11 @@ bool GTFSData::loadCompiledSnapshot(const std::string& path, std::string& error)
             if (!readU8(is, has)) return false;
             if (has) { int32_t v; if(!readI32(is,v)) return false; r.route_sort_order=v; } else r.route_sort_order=std::nullopt;
             if (!readOptionalString(is, r.network_id)) return false;
-            routes[r.feed_id][r.route_id] = std::move(r);
+            const std::string feed = r.feed_id;
+            const std::string id = r.route_id;
+            auto inserted = routes[feed].emplace(id, std::move(r));
+            if (!inserted.second) { error = "duplicate snapshot route"; return false; }
+            compiled_route_order.push_back(&inserted.first->second);
         }
         // Stops
         uint32_t stc;
@@ -546,7 +541,10 @@ bool GTFSData::loadCompiledSnapshot(const std::string& path, std::string& error)
             Trip t;
             is.read(reinterpret_cast<char*>(&t), sizeof(Trip));
             if (!is) { error="failed to read trip"; return false; }
-            trips[t.feed_id][t.trip_id] = t;
+            auto inserted = trips[t.feed_id].emplace(t.trip_id, t);
+            if (!inserted.second) { error = "duplicate snapshot trip"; return false; }
+            compiled_trip_order.push_back(&inserted.first->second);
+            if (compiled_trip_feed_order.empty() || compiled_trip_feed_order.back() != t.feed_id) compiled_trip_feed_order.push_back(t.feed_id);
         }
         // Transfers
         uint32_t trc;
@@ -658,30 +656,23 @@ bool GTFSData::loadCompiledSnapshot(const std::string& path, std::string& error)
             for (size_t i=0;i<static_occupancies.size();++i) static_occupancies_by_trip_id[static_occupancies[i].trip_id].push_back(i);
         }
         // Trip indexes
-        for (auto &feedKV : trips) for (auto &tripKV : feedKV.second) {
-            const Trip& t = tripKV.second;
-            trips_by_route_id[t.feed_id][t.route_id].push_back(&tripKV.second);
-            trips_by_service_id[t.feed_id][t.service_id].push_back(&tripKV.second);
-            if (t.block_id != 0xFFFFFFFFu) trips_by_block_id[t.feed_id][t.block_id].push_back(&tripKV.second);
+        for (const auto* trip : compiled_trip_order) {
+            const Trip& t = *trip;
+            trips_by_route_id[t.feed_id][t.route_id].push_back(trip);
+            trips_by_service_id[t.feed_id][t.service_id].push_back(trip);
+            if (t.block_id != 0xFFFFFFFFu) trips_by_block_id[t.feed_id][t.block_id].push_back(trip);
         }
         // Shape ranges
         {
-            std::unordered_map<uint64_t, std::vector<Shape>> tmp;
-            for (auto &s : shapes) {
-                uint64_t key = (static_cast<uint64_t>(s.feed_id)<<32)|s.shape_id;
-                tmp[key].push_back(s);
-            }
-            shapes.clear();
             shape_ranges_by_id.clear();
-            size_t total=0; for(auto &kv:tmp) total+=kv.second.size();
-            shapes.reserve(total);
-            for (auto &kv: tmp) {
-                auto &vec = kv.second;
-                std::sort(vec.begin(), vec.end(), [](auto& a, auto& b){return a.shape_pt_sequence < b.shape_pt_sequence;});
-                size_t begin = shapes.size();
-                shapes.insert(shapes.end(), vec.begin(), vec.end());
-                uint32_t sid = vec.front().shape_id;
-                shape_ranges_by_id[sid].push_back({begin, shapes.size()});
+            // Shapes were already grouped and ordered when written. Sorting
+            // again can permute tied sequences and change the geometry.
+            size_t begin = 0;
+            while (begin < shapes.size()) {
+                size_t end = begin + 1;
+                while (end < shapes.size() && shapes[end].feed_id == shapes[begin].feed_id && shapes[end].shape_id == shapes[begin].shape_id) ++end;
+                shape_ranges_by_id[shapes[begin].shape_id].push_back({begin, end});
+                begin = end;
             }
         }
 

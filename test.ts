@@ -1268,10 +1268,118 @@ async function testCompiledSnapshotPreservesRealtime() {
 	assert.equal(gtfs.getRealtimeVehiclePositions().length, 1);
 	// A successful load preserves the native realtime overlay and the JS aggregate.
 	gtfs.loadCompiledSnapshot(snapshotPath);
+	const pending = gtfs.loadCompiledSnapshotAsync(snapshotPath);
+	// The published snapshot remains usable while the worker validates its replacement.
+	assert.equal(gtfs.getStops().length, 1);
+	await pending;
 	assert.equal(gtfs.getStops()[0].stop_name, "Safety");
 	assert.equal(gtfs.getRealtimeVehiclePositions().length, 1);
 	assert.deepEqual(gtfs.getLastChangedTripIds(), changedBefore);
+	const addon = (gtfs as any).addonInstance;
+	// Queue directly at the native boundary so the update occurs after Queue
+	// and before OnOK, rather than racing the JS wrapper's asynchronous stat.
+	const inFlight = addon.loadCompiledSnapshotAsync(snapshotPath);
+	gtfs.updateRealtime({ kind: "vehicles", data: makeVehicleFeedWithCarriages("safety-new", "new-live-trip"), targetFeedId: "safety", sourceId: "safety-source" });
+	const changedDuringLoad = gtfs.getLastChangedTripIds();
+	await inFlight;
+	assert.equal(gtfs.getRealtimeVehiclePositions()[0].trip.trip_id, "new-live-trip", "worker publication must retain updates received during the load");
+	assert.deepEqual(gtfs.getLastChangedTripIds(), changedDuringLoad);
 	assert.throws(() => gtfs.loadCompiledSnapshot("  "), /non-empty/);
+	await assert.rejects(gtfs.loadCompiledSnapshotAsync("  "), /non-empty/);
+	await assert.rejects(gtfs.loadCompiledSnapshotAsync("test_cache/snapshot-integrity-flipped.bin"), /checksum|mismatch|corrupt|invalid/i);
+	assert.equal(gtfs.getStops().length, 1);
+}
+
+async function testAutomaticCompiledCache() {
+	const { mkdtempSync, writeFileSync, readdirSync, readFileSync } = await import("node:fs");
+	const { tmpdir } = await import("node:os");
+	const { join } = await import("node:path");
+	const { createHash } = await import("node:crypto");
+	const cacheDir = mkdtempSync(join(tmpdir(), "qdf-compiled-contract-"));
+	const url = "https://fixture.invalid/compiled.zip";
+	const networkCache = mkdtempSync(join(tmpdir(), "qdf-compiled-network-"));
+	const downloaded = new GTFS({ cache: true, compiledCache: true, cacheDir: networkCache, filesToLoad: ["stops.txt"] });
+	(downloaded as any).downloadWithFallbacks = async () => ({ buffer: createZip({ "stops.txt": "stop_id,stop_name\ns,Downloaded\n" }) });
+	const downloadedResult = await downloaded.loadStatic({ id: "network", url });
+	assert.equal(downloadedResult[0].source, "network");
+	assert.equal(downloaded.getStops()[0].stop_name, "Downloaded");
+	assert.equal(readdirSync(networkCache).filter((name) => name.endsWith(".bin")).length, 0, "initial downloads must not wait for a compiled-cache write");
+	const archive = join(cacheDir, createHash("md5").update(`${url}|{}`).digest("hex"));
+	const options = { cache: true, compiledCache: true, cacheDir, cacheMaxAgeMs: Number.MAX_SAFE_INTEGER, filesToLoad: ["stops.txt"] };
+	writeFileSync(archive, createZip({ "stops.txt": "stop_id,stop_name\ns,Version One\n" }));
+	const first = new GTFS(options);
+	await first.loadStatic({ id: "compiled", url });
+	const binary = readdirSync(cacheDir).find((name) => name.endsWith(".bin"))!;
+	assert.ok(binary, "a cached archive should produce a reusable binary");
+	const restored = new GTFS(options);
+	(restored as any).parseBuffers = () => { throw new Error("cache hit must bypass ZIP parsing"); };
+	await restored.loadStatic({ id: "compiled", url });
+	assert.deepEqual(restored.getStops(), first.getStops());
+	// Cached stop actions must never contaminate the binary for the original ZIP.
+	first.actions.updateStop("s", { stop_name: "Modified in runtime" }, "compiled");
+	await restored.loadStatic({ id: "compiled", url });
+	assert.equal(restored.getStops()[0].stop_name, "Version One");
+	const corrupted = readFileSync(join(cacheDir, binary));
+	corrupted[corrupted.length - 1] ^= 1;
+	writeFileSync(join(cacheDir, binary), corrupted);
+	const fallback = new GTFS(options);
+	await fallback.loadStatic({ id: "compiled", url });
+	assert.equal(fallback.getStops()[0].stop_name, "Version One", "corrupt binary must fall back to validated ZIP");
+	writeFileSync(archive, createZip({ "stops.txt": "stop_id,stop_name\ns,Version Two\n", "trips.txt": "route_id,service_id,trip_id\nr,s,t\n" }));
+	const changed = new GTFS(options);
+	await changed.loadStatic({ id: "compiled", url });
+	assert.equal(changed.getStops()[0].stop_name, "Version Two", "changing archive contents must invalidate the binary");
+	const strict = new GTFS({ ...options, maxExtractedEntryBytes: 10 });
+	await assert.rejects(strict.loadStatic({ id: "compiled", url }), /size|limit|exceed/i);
+	const differentFeed = new GTFS(options);
+	await differentFeed.loadStatic({ id: "different-feed", url });
+	assert.equal(differentFeed.getStops()[0].feed_id, "different-feed");
+	const noStops = new GTFS({ ...options, filesToLoad: ["trips.txt"] });
+	await noStops.loadStatic({ id: "compiled", url });
+	assert.equal(noStops.getStops().length, 0, "file filters must have separate binary identities");
+	const prefix = binary.slice(0, binary.lastIndexOf("-") + 1);
+	const otherGroups = readdirSync(cacheDir).filter((name) => name.endsWith(".bin") && !name.startsWith(prefix));
+	for (const version of ["Three", "Four", "Five"]) {
+		writeFileSync(archive, createZip({ "stops.txt": `stop_id,stop_name\ns,Version ${version}\n` }));
+		const next = new GTFS(options);
+		await next.loadStatic({ id: "compiled", url });
+		assert.equal(next.getStops()[0].stop_name, `Version ${version}`);
+		// Wait for the same asynchronous maintenance used by loadStatic.
+		const content = createHash("sha256").update(`${readFileSync(archive).length}:`).update(readFileSync(archive)).digest("hex");
+		await (next as any).pruneCompiledSnapshots(cacheDir, prefix, join(cacheDir, `${prefix}${content}.bin`));
+		assert.equal(readdirSync(cacheDir).filter((name) => name.startsWith(prefix) && name.endsWith(".bin")).length, 2);
+	}
+	assert.ok(otherGroups.every((name) => readdirSync(cacheDir).includes(name)), "pruning must preserve other feed and option groups");
+	assert.ok(readFileSync(archive).length > 0, "compiled maintenance must preserve the source archive");
+}
+
+async function testCompiledSnapshotQueryParity() {
+	const routes = Array.from({ length: 50 }, (_, i) => `r${i},Route ${i},2`).join("\n");
+	const trips = Array.from({ length: 50 }, (_, i) => `r${i % 5},weekday,t${i},shape`).join("\n");
+	const shapes = Array.from({ length: 80 }, (_, i) => `shape,${-27 + i / 1000},153,${Math.floor(i / 2)}`).join("\n");
+	const zip = createZip({
+		"routes.txt": `route_id,route_long_name,route_type\n${routes}\n`,
+		"trips.txt": `route_id,service_id,trip_id,shape_id\n${trips}\n`,
+		"shapes.txt": `shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n${shapes}\n`,
+	});
+	const original = new GTFS({ filesToLoad: ["routes.txt", "trips.txt", "shapes.txt"] });
+	await original.loadFromBuffers([zip, zip], ["a", "b"]);
+	const file = "test_cache/snapshot-query-order.bin";
+	original.saveCompiledSnapshot(file);
+	const restored = new GTFS();
+	await restored.loadCompiledSnapshotAsync(file);
+	assert.deepEqual(restored.getRoutes(), original.getRoutes(), "route queries must preserve snapshot order");
+	assert.deepEqual(restored.getTrips(), original.getTrips(), "trip queries must preserve snapshot order");
+	assert.deepEqual(restored.getTrips({ route_id: "r1", feed_id: "a" }), original.getTrips({ route_id: "r1", feed_id: "a" }));
+	assert.deepEqual(restored.getTrips({ route_id: "r1" }), original.getTrips({ route_id: "r1" }), "indexed searches must retain cross-feed order");
+	assert.deepEqual(restored.getTrips({ trip_id: "t1" }), original.getTrips({ trip_id: "t1" }));
+	assert.deepEqual(restored.getRoutes({ route_id: "r1" }), original.getRoutes({ route_id: "r1" }));
+	assert.deepEqual(restored.getShapesPacked({ feed_id: "a", shape_id: "shape" }), original.getShapesPacked({ feed_id: "a", shape_id: "shape" }), "tied shape sequences must preserve geometry exactly");
+	restored.saveCompiledSnapshot(file);
+	const twice = new GTFS();
+	await twice.loadCompiledSnapshotAsync(file);
+	assert.deepEqual(twice.getRoutes(), original.getRoutes());
+	assert.deepEqual(twice.getTrips(), original.getTrips());
 }
 
 async function testPackageMetadata() {
@@ -1310,5 +1418,7 @@ await testStaticFallbackUrls();
 await testRealtimeAggregateDeadline();
 await testStaticCacheHeadersAndTempNaming();
 await testCompiledSnapshotPreservesRealtime();
+await testAutomaticCompiledCache();
+await testCompiledSnapshotQueryParity();
 await testPackageMetadata();
 console.log("All QDF-GTFS tests passed.");

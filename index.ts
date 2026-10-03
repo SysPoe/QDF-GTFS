@@ -414,6 +414,7 @@ export class GTFS {
     private ansi: boolean;
     private cacheDir?: string;
     private cache: boolean;
+    private compiledCache: boolean;
     private mergeStrategy: GTFSMergeStrategy;
     private lastProgressUpdate: number = 0;
     private lastProgressByTask = new Map<string, number>();
@@ -445,6 +446,7 @@ export class GTFS {
         this.ansi = options?.ansi || false;
         this.cacheDir = options?.cacheDir;
         this.cache = options?.cache || false;
+        this.compiledCache = options?.compiledCache ?? false;
         this.mergeStrategy = options?.mergeStrategy !== undefined ? options.mergeStrategy : GTFSMergeStrategy.OVERWRITE;
         this.filesToLoad = options?.filesToLoad;
         this.skipStopTimes = options?.skipStopTimes || false;
@@ -724,7 +726,57 @@ export class GTFS {
         }
 
         const feedIds = feedList.map((feed) => feed.id);
-        await this.loadFromBuffers(buffers, feedIds);
+        // Match exact ZIP bytes and parsing options. Transport cache age and
+        // stale-if-error decisions above still apply before the binary lookup.
+        let compiledPath: string | undefined;
+        let compiledPrefix: string | undefined;
+        if (this.cache && this.compiledCache) {
+            const optionsKey = crypto.createHash('sha256').update(JSON.stringify([
+                'qdf-static-v4', feedIds, this.mergeStrategy, this.filesToLoad ?? null,
+                this.skipStopTimes, this.maxExtractedEntryBytes,
+            ])).digest('hex');
+            compiledPrefix = `.qdf-static-${optionsKey}-`;
+            // A first download has no reusable binary and will not write one.
+            // Avoid hashing every archive unless this group can benefit.
+            const archiveCacheHit = results.every((result) => result.source !== 'network');
+            const existing = archiveCacheHit ? [] : await fsp.readdir(cacheDir).catch(() => []);
+            if (archiveCacheHit || existing.some((name) => name.startsWith(compiledPrefix!) && name.endsWith('.bin'))) {
+                const content = crypto.createHash('sha256');
+                for (const buffer of buffers) {
+                    content.update(`${buffer.length}:`);
+                    for (let offset = 0; offset < buffer.length; offset += 8 * 1024 * 1024) {
+                        content.update(buffer.subarray(offset, offset + 8 * 1024 * 1024));
+                        await new Promise<void>((resolve) => setImmediate(resolve));
+                    }
+                }
+                compiledPath = path.join(cacheDir, `${compiledPrefix}${content.digest('hex')}.bin`);
+            }
+        }
+        let restored = false;
+        if (compiledPath) {
+            try {
+                await this.loadCompiledSnapshotAsync(compiledPath);
+                restored = true;
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT' && this.logger) {
+                    this.logger(`Compiled cache unavailable; parsing ZIPs: ${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
+        }
+        if (!restored) {
+            // Initial downloads take the uncached path without adding snapshot
+            // writes. Build the binary only on a subsequent archive-cache hit.
+            let savePath: string | undefined;
+            if (compiledPath && results.every((result) => result.source !== 'network')) {
+                try { await fsp.mkdir(cacheDir, { recursive: true }); savePath = compiledPath; } catch {}
+            }
+            await this.parseBuffers(buffers, feedIds, savePath);
+        }
+        if (compiledPath && compiledPrefix) {
+            // Keep the current content plus one prior feed version. Only this
+            // exact feed/options group is touched; raw archives stay canonical.
+            void this.pruneCompiledSnapshots(cacheDir, compiledPrefix, compiledPath).catch(() => {});
+        }
 		// Only replace durable caches after every downloaded ZIP parsed successfully.
 		// Temp files live beside the final cache entry (same filesystem for an
 		// atomic rename) and use a `.tmp.<pid>.<uuid>` suffix so crashed
@@ -751,6 +803,10 @@ export class GTFS {
     }
 
     loadFromBuffers(buffers: Buffer[], feedIds: string[]): Promise<void> {
+        return this.parseBuffers(buffers, feedIds);
+    }
+
+    private parseBuffers(buffers: Buffer[], feedIds: string[], compiledPath?: string): Promise<void> {
         if (buffers.length === 0) throw new Error('At least one GTFS buffer is required');
         if (feedIds.length !== buffers.length) {
             throw new Error(`Expected one feed ID per GTFS buffer; received ${feedIds.length} IDs for ${buffers.length} buffers`);
@@ -775,8 +831,7 @@ export class GTFS {
             effectiveFiles = effectiveFiles.filter(f => f !== 'stop_times.txt');
         }
 
-        // Try compiled warm path if cache enabled and caller is loadFromBuffers directly (e.g., tests)
-        // We do not automatically try here to avoid double path; loadStatic already tried
+        // loadStatic handles binary-cache identity; direct buffers always parse.
         return this.addonInstance.loadFromBuffers(
 			buffers,
 			this.mergeStrategy,
@@ -786,11 +841,34 @@ export class GTFS {
 			feedIds,
 			effectiveFiles,
 			this.maxExtractedEntryBytes,
+            compiledPath,
 		)
             .then((result: void) => {
                 this.serviceDatesCache = null;
                 return result;
             });
+    }
+
+    private async pruneCompiledSnapshots(cacheDir: string, prefix: string, current: string): Promise<void> {
+        // A failed/disabled write must not evict the last usable version.
+        await fsp.stat(current);
+        const entries = (await fsp.readdir(cacheDir)).filter((name) => name.startsWith(prefix) && name.endsWith('.bin'));
+        const files = await Promise.all(entries.map(async (name) => {
+            const file = path.join(cacheDir, name);
+            return { file, modified: (await fsp.stat(file)).mtimeMs };
+        }));
+        const older = files.filter(({ file }) => file !== current).sort((a, b) => b.modified - a.modified);
+        await Promise.all(older.slice(1).map(({ file }) => fsp.unlink(file).catch(() => {})));
+    }
+
+    /** Validate and load a static binary without blocking the JS event loop. */
+    async loadCompiledSnapshotAsync(filePath: string): Promise<void> {
+        if (!filePath?.trim()) throw new Error('Compiled snapshot path must be non-empty');
+        const size = (await fsp.stat(filePath)).size;
+        if (size < 32) throw new Error(`Compiled snapshot '${filePath}' is too small (${size} bytes)`);
+        await this.addonInstance.loadCompiledSnapshotAsync(filePath);
+        this.serviceDatesCache = null;
+        this.lastRealtimeRevision = this.addonInstance.getSnapshotRevision().realtime_revision ?? this.lastRealtimeRevision;
     }
 
     getSnapshotRevision(): { realtime_revision: number; stop_time_count: number; trip_count: number } {

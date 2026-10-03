@@ -17,6 +17,7 @@ export declare class GTFS {
     private ansi;
     private cacheDir?;
     private cache;
+    private compiledCache;
     private mergeStrategy;
     private lastProgressUpdate;
     private lastProgressByTask;
@@ -44,6 +45,10 @@ export declare class GTFS {
     loadStatic(feeds: GTFSFeedConfig[] | GTFSFeedConfig): Promise<GTFSStaticLoadResult[]>;
     loadFromPath(paths: string[], feedIds: string[]): Promise<void>;
     loadFromBuffers(buffers: Buffer[], feedIds: string[]): Promise<void>;
+    private parseBuffers;
+    private pruneCompiledSnapshots;
+    /** Validate and load a static binary without blocking the JS event loop. */
+    loadCompiledSnapshotAsync(filePath: string): Promise<void>;
     getSnapshotRevision(): {
         realtime_revision: number;
         stop_time_count: number;

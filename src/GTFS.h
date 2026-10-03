@@ -461,6 +461,11 @@ public:
     std::unordered_map<uint32_t, std::vector<size_t>> static_occupancies_by_trip_id;
 
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, Trip>> trips;
+    // Snapshot records retain the published query order independently of hash
+    // bucket reconstruction. Node addresses stay stable across map rehashes.
+    std::vector<const Route*> compiled_route_order;
+    std::vector<const Trip*> compiled_trip_order;
+    std::vector<uint32_t> compiled_trip_feed_order;
     std::vector<Transfer> transfers;
     std::vector<Frequency> frequencies;
     // Secondary indexes keep common trip searches out of the full feed map.
@@ -580,6 +585,9 @@ public:
         static_occupancies.clear();
         static_occupancies_by_trip_id.clear();
         trips.clear();
+        compiled_route_order.clear();
+        compiled_trip_order.clear();
+        compiled_trip_feed_order.clear();
         transfers.clear();
         frequencies.clear();
         trips_by_route_id.clear();
@@ -607,6 +615,9 @@ public:
 		static_occupancies.shrink_to_fit();
 		static_occupancies_by_trip_id.rehash(0);
 		trips.rehash(0);
+		compiled_route_order.shrink_to_fit();
+		compiled_trip_order.shrink_to_fit();
+		compiled_trip_feed_order.shrink_to_fit();
 		transfers.shrink_to_fit();
 		frequencies.shrink_to_fit();
 		trips_by_route_id.rehash(0);
