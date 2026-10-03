@@ -11,6 +11,23 @@
 
 namespace gtfs {
 
+// TripDescriptor reserves value 4; newer defined statuses must not reject a mixed feed.
+bool valid_trip_schedule_relationship(int value) {
+    switch (value) {
+        case GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_SCHEDULED:
+        case GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_ADDED:
+        case GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_UNSCHEDULED:
+        case GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_CANCELED:
+        case GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_REPLACEMENT:
+        case GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_DUPLICATED:
+        case GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_DELETED:
+        case GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_NEW:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // --- Helper Functions for Nanopb Decoders ---
 // Decodes a string from a protobuf field
 bool decode_string(pb_istream_t *stream, const pb_field_t *field, void **arg) {
@@ -351,7 +368,7 @@ RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf
 
             if (tu_ctx.current_update.trip.trip_id.empty() ||
                 (tu_ctx.current_update.trip.direction_id != -1 && tu_ctx.current_update.trip.direction_id > 1) ||
-                (tu_ctx.current_update.trip.schedule_relationship < 0 || tu_ctx.current_update.trip.schedule_relationship > 5)) return false;
+                !valid_trip_schedule_relationship(tu_ctx.current_update.trip.schedule_relationship)) return false;
             for (const auto& stu : tu_ctx.current_update.stop_time_updates) {
                 if ((stu.stop_sequence < 0 && stu.stop_id.empty()) || stu.schedule_relationship < 0 || stu.schedule_relationship > 3 ||
                     stu.arrival_time < -1 || stu.departure_time < -1 || stu.arrival_uncertainty < -1 || stu.departure_uncertainty < -1) return false;
@@ -408,7 +425,7 @@ RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf
 
              if (vp_ctx.current_pos.trip.trip_id.empty() ||
                  (vp_ctx.current_pos.trip.direction_id != -1 && vp_ctx.current_pos.trip.direction_id > 1) ||
-                 (vp_ctx.current_pos.trip.schedule_relationship < 0 || vp_ctx.current_pos.trip.schedule_relationship > 5) ||
+                 !valid_trip_schedule_relationship(vp_ctx.current_pos.trip.schedule_relationship) ||
                  (vp_ctx.current_pos.current_status != -1 && vp_ctx.current_pos.current_status > 2) ||
                  (vp_ctx.current_pos.congestion_level != -1 && vp_ctx.current_pos.congestion_level > 4) ||
                  (vp_ctx.current_pos.occupancy_status != -1 && vp_ctx.current_pos.occupancy_status > _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_MAX)) return false;

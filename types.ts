@@ -83,8 +83,10 @@ export enum TripScheduleRelationship {
     ADDED = 1,
     UNSCHEDULED = 2,
     CANCELED = 3,
-    DUPLICATED = 4,
-    REPLACEMENT = 5
+    REPLACEMENT = 5,
+    DUPLICATED = 6,
+    DELETED = 7,
+    NEW = 8
 }
 
 export enum StopTimeScheduleRelationship {

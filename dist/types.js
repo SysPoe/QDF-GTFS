@@ -82,8 +82,10 @@ export var TripScheduleRelationship;
     TripScheduleRelationship[TripScheduleRelationship["ADDED"] = 1] = "ADDED";
     TripScheduleRelationship[TripScheduleRelationship["UNSCHEDULED"] = 2] = "UNSCHEDULED";
     TripScheduleRelationship[TripScheduleRelationship["CANCELED"] = 3] = "CANCELED";
-    TripScheduleRelationship[TripScheduleRelationship["DUPLICATED"] = 4] = "DUPLICATED";
     TripScheduleRelationship[TripScheduleRelationship["REPLACEMENT"] = 5] = "REPLACEMENT";
+    TripScheduleRelationship[TripScheduleRelationship["DUPLICATED"] = 6] = "DUPLICATED";
+    TripScheduleRelationship[TripScheduleRelationship["DELETED"] = 7] = "DELETED";
+    TripScheduleRelationship[TripScheduleRelationship["NEW"] = 8] = "NEW";
 })(TripScheduleRelationship || (TripScheduleRelationship = {}));
 export var StopTimeScheduleRelationship;
 (function (StopTimeScheduleRelationship) {

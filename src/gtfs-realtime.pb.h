@@ -155,8 +155,14 @@ typedef enum _GTFSv2_Realtime_TripDescriptor_ScheduleRelationship {
     GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_UNSCHEDULED = 2,
     /* A trip that existed in the schedule but was removed. */
     GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_CANCELED = 3,
-    /* Should not be used - for backwards-compatibility only. */
-    GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_REPLACEMENT = 5
+    /* A trip that replaces an existing trip in the schedule. */
+    GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_REPLACEMENT = 5,
+    /* An extra copy of an existing scheduled trip. */
+    GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_DUPLICATED = 6,
+    /* A scheduled trip removed from passenger information. */
+    GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_DELETED = 7,
+    /* An extra trip unrelated to an existing scheduled trip. */
+    GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_NEW = 8
 } GTFSv2_Realtime_TripDescriptor_ScheduleRelationship;
 
 /* Struct definitions */
@@ -629,8 +635,8 @@ extern "C" {
 #define _GTFSv2_Realtime_Alert_SeverityLevel_ARRAYSIZE ((GTFSv2_Realtime_Alert_SeverityLevel)(GTFSv2_Realtime_Alert_SeverityLevel_SEVERE+1))
 
 #define _GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_MIN GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_SCHEDULED
-#define _GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_MAX GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_REPLACEMENT
-#define _GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_ARRAYSIZE ((GTFSv2_Realtime_TripDescriptor_ScheduleRelationship)(GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_REPLACEMENT+1))
+#define _GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_MAX GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_NEW
+#define _GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_ARRAYSIZE ((GTFSv2_Realtime_TripDescriptor_ScheduleRelationship)(GTFSv2_Realtime_TripDescriptor_ScheduleRelationship_NEW+1))
 
 
 #define GTFSv2_Realtime_FeedHeader_incrementality_ENUMTYPE GTFSv2_Realtime_FeedHeader_Incrementality

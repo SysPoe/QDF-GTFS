@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GTFS, parseGtfsRtMultiCarriageDetails } from './index.js';
 import { createZip, message, scalar, vehicleFeed, tripFeed } from './audit_fixtures.js';
+import { TripScheduleRelationship } from './types.js';
 
 let failures = 0;
 async function check(name: string, run: () => Promise<void> | void) {
@@ -22,6 +23,61 @@ const input = (data: Buffer | Buffer[], sourceId = 'vehicles', targetFeedId = 'f
     ({ kind: 'vehicles' as const, data, sourceId, targetFeedId });
 const good = createZip({ 'stops.txt': 'stop_id,stop_name\ns,Healthy\n' });
 const malformedCsv = createZip({ 'stops.txt': 'stop_id,stop_name\ns,\n' });
+
+function tripRelationshipFeed(relationships: number[], vehicles = false): Buffer {
+    const timestamp = 1791066800;
+    const entities = relationships.map((relationship, i) => {
+        const trip = Buffer.concat([
+            message(1, `trip${i}`), message(3, '20261003'), scalar(4, relationship), message(5, 'route'),
+        ]);
+        const stop = Buffer.concat([
+            scalar(1, 1), message(3, Buffer.concat([scalar(1, 60), scalar(2, timestamp + 600 + i)])), message(4, 'UN'),
+        ]);
+        const payload = Buffer.concat([
+            message(1, trip), ...(vehicles ? [] : [message(2, stop)]), scalar(vehicles ? 5 : 4, timestamp),
+        ]);
+        return message(2, Buffer.concat([message(1, `entity${i}`), message(vehicles ? 4 : 3, payload)]));
+    });
+    return Buffer.concat([message(1, Buffer.concat([message(1, '2.0'), scalar(3, timestamp)])), ...entities]);
+}
+
+await check('NEW trip among scheduled Union estimates preserves the entire source and indexes', () => {
+    const gtfs = new GTFS();
+    const result = gtfs.updateRealtime({ kind: 'trip-updates', data: tripRelationshipFeed([0, 8, 0]), sourceId: 'go-trip-updates', targetFeedId: 'go' });
+    const updates = gtfs.getRealtimeTripUpdates({ source_id: 'go-trip-updates', feed_id: 'go' });
+    assert.equal(updates.length, 3);
+    assert.deepEqual(updates.map(row => row.trip.schedule_relationship), [0, 8, 0]);
+    assert.deepEqual(updates.map(row => row.stop_time_updates[0].departure_time), [1791067400, 1791067401, 1791067402]);
+    assert.equal(gtfs.getRealtimeTripUpdates({ trip_id: 'trip2' })[0].stop_time_updates[0].stop_id, 'UN');
+    assert.deepEqual(new Set(result.changed_trip_ids.map(row => row.trip_id)), new Set(['trip0', 'trip1', 'trip2']));
+});
+await check('TripDescriptor relationships preserve current GTFS wire values in trips and vehicles', () => {
+    assert.equal(TripScheduleRelationship.DUPLICATED, 6);
+    assert.equal(TripScheduleRelationship.DELETED, 7);
+    assert.equal(TripScheduleRelationship.NEW, 8);
+    const relationships = [0, 1, 2, 3, 5, 6, 7, 8];
+    for (const vehicles of [false, true]) {
+        const gtfs = new GTFS();
+        gtfs.updateRealtime({ kind: vehicles ? 'vehicles' : 'trip-updates', data: tripRelationshipFeed(relationships, vehicles), sourceId: 'source', targetFeedId: 'feed' });
+        const rows = vehicles ? gtfs.getRealtimeVehiclePositions() : gtfs.getRealtimeTripUpdates();
+        assert.deepEqual(rows.map(row => row.trip.schedule_relationship), relationships);
+    }
+});
+await check('reserved and unknown trip relationships reject atomically and retain healthy observations', () => {
+    for (const vehicles of [false, true]) {
+        const gtfs = new GTFS();
+        const source = { kind: vehicles ? 'vehicles' as const : 'trip-updates' as const, sourceId: 'source', targetFeedId: 'feed' };
+        gtfs.updateRealtime({ ...source, data: tripRelationshipFeed([0], vehicles) });
+        const read = () => vehicles ? gtfs.getRealtimeVehiclePositions() : gtfs.getRealtimeTripUpdates();
+        const previous = read();
+        const revision = gtfs.getRealtimeRevision();
+        for (const relationship of [4, 9]) {
+            assert.throws(() => gtfs.updateRealtime({ ...source, data: tripRelationshipFeed([0, relationship], vehicles) }));
+            assert.deepEqual(read(), previous);
+            assert.equal(gtfs.getRealtimeRevision(), revision);
+        }
+    }
+});
 
 await check('documented occupancy values and unknown carriage percentage survive native replacement', () => {
     for (const options of [
