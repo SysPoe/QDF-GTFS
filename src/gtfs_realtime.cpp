@@ -124,7 +124,7 @@ bool decode_carriage_details(pb_istream_t* stream, const pb_field_t* field, void
                 if (wire_type != PB_WT_VARINT) return false;
                 uint32_t value;
                 if (!pb_decode_varint32(stream, &value)) return false;
-                if (value > 6) return false;
+                if (value > _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_MAX) return false;
                 carriage.occupancy_status = static_cast<int>(value);
                 break;
             }
@@ -132,8 +132,10 @@ bool decode_carriage_details(pb_istream_t* stream, const pb_field_t* field, void
                 if (wire_type != PB_WT_VARINT) return false;
                 uint32_t value;
                 if (!pb_decode_varint32(stream, &value)) return false;
-                if (value > 100) return false;
-                carriage.occupancy_percentage = static_cast<int>(value);
+                // int32 uses two's-complement varints; -1 means unknown.
+                const int64_t signed_value = value <= 0x7fffffffU ? value : static_cast<int64_t>(value) - 0x100000000LL;
+                if (signed_value < -1) return false;
+                carriage.occupancy_percentage = static_cast<int>(signed_value);
                 break;
             }
             case 5: {
@@ -409,8 +411,7 @@ RealtimeParseResult parse_realtime_feed(GTFSData& data, const unsigned char* buf
                  (vp_ctx.current_pos.trip.schedule_relationship < 0 || vp_ctx.current_pos.trip.schedule_relationship > 5) ||
                  (vp_ctx.current_pos.current_status != -1 && vp_ctx.current_pos.current_status > 2) ||
                  (vp_ctx.current_pos.congestion_level != -1 && vp_ctx.current_pos.congestion_level > 4) ||
-                 (vp_ctx.current_pos.occupancy_status != -1 && vp_ctx.current_pos.occupancy_status > 6) ||
-                 (vp_ctx.current_pos.occupancy_percentage != -1 && vp_ctx.current_pos.occupancy_percentage > 100)) return false;
+                 (vp_ctx.current_pos.occupancy_status != -1 && vp_ctx.current_pos.occupancy_status > _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_MAX)) return false;
 
              if (entity.vehicle.has_position) {
                  if (!std::isfinite(entity.vehicle.position.latitude) || !std::isfinite(entity.vehicle.position.longitude) ||

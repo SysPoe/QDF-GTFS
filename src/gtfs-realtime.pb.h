@@ -92,7 +92,9 @@ typedef enum _GTFSv2_Realtime_VehiclePosition_OccupancyStatus {
  allowing passengers to board. */
     GTFSv2_Realtime_VehiclePosition_OccupancyStatus_FULL = 5,
     /* The vehicle is not accepting additional passengers. */
-    GTFSv2_Realtime_VehiclePosition_OccupancyStatus_NOT_ACCEPTING_PASSENGERS = 6
+    GTFSv2_Realtime_VehiclePosition_OccupancyStatus_NOT_ACCEPTING_PASSENGERS = 6,
+    GTFSv2_Realtime_VehiclePosition_OccupancyStatus_NO_DATA_AVAILABLE = 7,
+    GTFSv2_Realtime_VehiclePosition_OccupancyStatus_NOT_BOARDABLE = 8
 } GTFSv2_Realtime_VehiclePosition_OccupancyStatus;
 
 /* Cause of this alert. */
@@ -611,8 +613,8 @@ extern "C" {
 #define _GTFSv2_Realtime_VehiclePosition_CongestionLevel_ARRAYSIZE ((GTFSv2_Realtime_VehiclePosition_CongestionLevel)(GTFSv2_Realtime_VehiclePosition_CongestionLevel_SEVERE_CONGESTION+1))
 
 #define _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_MIN GTFSv2_Realtime_VehiclePosition_OccupancyStatus_EMPTY
-#define _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_MAX GTFSv2_Realtime_VehiclePosition_OccupancyStatus_NOT_ACCEPTING_PASSENGERS
-#define _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_ARRAYSIZE ((GTFSv2_Realtime_VehiclePosition_OccupancyStatus)(GTFSv2_Realtime_VehiclePosition_OccupancyStatus_NOT_ACCEPTING_PASSENGERS+1))
+#define _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_MAX GTFSv2_Realtime_VehiclePosition_OccupancyStatus_NOT_BOARDABLE
+#define _GTFSv2_Realtime_VehiclePosition_OccupancyStatus_ARRAYSIZE ((GTFSv2_Realtime_VehiclePosition_OccupancyStatus)(GTFSv2_Realtime_VehiclePosition_OccupancyStatus_NOT_BOARDABLE+1))
 
 #define _GTFSv2_Realtime_Alert_Cause_MIN GTFSv2_Realtime_Alert_Cause_UNKNOWN_CAUSE
 #define _GTFSv2_Realtime_Alert_Cause_MAX GTFSv2_Realtime_Alert_Cause_MEDICAL_EMERGENCY

@@ -24,6 +24,7 @@
   ],
   "scripts": {
     "test": "tsx test.ts",
+    "test:audit-regressions": "tsx audit_regression_test.ts",
     "build": "tsc",
     "install": "node-gyp rebuild",
     "prepare": "npm run build",

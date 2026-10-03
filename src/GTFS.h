@@ -403,7 +403,7 @@ struct RealtimeVehiclePosition {
     bool has_timestamp = false;
     int congestion_level = -1;
     int occupancy_status = -1;
-    int occupancy_percentage = -1;
+    int64_t occupancy_percentage = -1;
     std::vector<RealtimeCarriageDetails> multi_carriage_details;
     std::string feed_id;
     std::string source_id;
@@ -503,17 +503,33 @@ public:
         realtime_alerts_by_source_id[realtime_alerts[index].source_id].push_back(index);
     }
 
-    void rebuildRealtimeIndexes() {
-        clearRealtimeIndexes();
+    void rebuildRealtimeTripUpdateIndexes() {
+        realtime_trip_updates_by_trip_id.clear();
+        realtime_trip_updates_by_source_id.clear();
         for (size_t index = 0; index < realtime_trip_updates.size(); ++index) {
             indexRealtimeTripUpdate(index);
         }
+    }
+
+    void rebuildRealtimeVehiclePositionIndexes() {
+        realtime_vehicle_positions_by_trip_id.clear();
+        realtime_vehicle_positions_by_source_id.clear();
         for (size_t index = 0; index < realtime_vehicle_positions.size(); ++index) {
             indexRealtimeVehiclePosition(index);
         }
+    }
+
+    void rebuildRealtimeAlertIndexes() {
+        realtime_alerts_by_source_id.clear();
         for (size_t index = 0; index < realtime_alerts.size(); ++index) {
             indexRealtimeAlert(index);
         }
+    }
+
+    void rebuildRealtimeIndexes() {
+        rebuildRealtimeTripUpdateIndexes();
+        rebuildRealtimeVehiclePositionIndexes();
+        rebuildRealtimeAlertIndexes();
     }
 
     void rebuildStopTimeIndexes() {

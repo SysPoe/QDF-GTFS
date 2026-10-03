@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <cmath>
 #include <array>
+#include <type_traits>
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
@@ -785,48 +786,72 @@ Napi::Value GTFSAddon::UpdateRealtime(const Napi::CallbackInfo& info) {
             if (changed_trip_keys.insert(key).second) changed_trip_ids.push_back({trip_id, changed_feed_id});
         };
 
-        auto apply_kind = [&](auto current, const auto& incoming, int type, auto&& mark_changed) {
-            if (!present[type]) return current;
+        std::array<bool, 3> changed_kinds = {false, false, false};
+        auto apply_kind = [&](const auto& current, const auto& incoming, int type, auto&& mark_changed) {
+            using Rows = std::decay_t<decltype(current)>;
+            Rows replacement;
+            if (!present[type]) return replacement;
             const bool is_differential = differential[type].value_or(false);
-            const std::unordered_set<std::string> deleted(tombstones[type].begin(), tombstones[type].end());
+            std::unordered_set<std::string> incoming_ids;
+            incoming_ids.reserve(tombstones[type].size() + incoming.size());
+            for (const auto& id : tombstones[type]) {
+                if (!incoming_ids.insert(id).second) throw std::runtime_error("Duplicate GTFS-RT entity id " + id);
+            }
+            for (const auto& row : incoming) {
+                if (!incoming_ids.insert(row.update_id).second) throw std::runtime_error("Duplicate GTFS-RT entity id " + row.update_id);
+            }
             auto matches_source = [&](const auto& row) {
                 return (feed_id.empty() || row.feed_id == feed_id) && row.source_id == source_id;
             };
-            current.erase(std::remove_if(current.begin(), current.end(), [&](const auto& row) {
-                const bool remove = matches_source(row) && (!is_differential || deleted.count(row.update_id));
-                if (remove) mark_changed(row);
-                return remove;
-            }), current.end());
-
-            std::unordered_set<std::string> incoming_ids;
-            for (const auto& row : incoming) {
-                if (!incoming_ids.insert(row.update_id).second) throw std::runtime_error("Duplicate GTFS-RT entity id " + row.update_id);
-                if (is_differential) {
-                    current.erase(std::remove_if(current.begin(), current.end(), [&](const auto& existing) {
-                        const bool remove = matches_source(existing) && existing.update_id == row.update_id;
-                        if (remove) mark_changed(existing);
-                        return remove;
-                    }), current.end());
-                }
-                mark_changed(row);
-                current.push_back(row);
+            replacement.reserve(current.size() + incoming.size());
+            // One scan removes overwritten rows and tombstones. Copy only survivors.
+            for (const auto& row : current) {
+                if (matches_source(row) && (!is_differential || incoming_ids.count(row.update_id))) {
+                    mark_changed(row);
+                    changed_kinds[type] = true;
+                } else replacement.push_back(row);
             }
-            return current;
+            for (const auto& row : incoming) {
+                mark_changed(row);
+                replacement.push_back(row);
+                changed_kinds[type] = true;
+            }
+            return replacement;
         };
 
         auto mark_trip_record = [&](const auto& row) { mark_changed_trip(row.feed_id, row.trip.trip_id); };
         auto no_mark = [](const auto&) {};
-        auto trip_updates = apply_kind(data.realtime_trip_updates, staged.realtime_trip_updates, 0, mark_trip_record);
-        auto vehicle_positions = apply_kind(data.realtime_vehicle_positions, staged.realtime_vehicle_positions, 1, mark_trip_record);
-        auto alerts = apply_kind(data.realtime_alerts, staged.realtime_alerts, 2, no_mark);
+        gtfs::GTFSData replacement;
+        if (present[0]) {
+            replacement.realtime_trip_updates = apply_kind(data.realtime_trip_updates, staged.realtime_trip_updates, 0, mark_trip_record);
+            if (changed_kinds[0]) replacement.rebuildRealtimeTripUpdateIndexes();
+        }
+        if (present[1]) {
+            replacement.realtime_vehicle_positions = apply_kind(data.realtime_vehicle_positions, staged.realtime_vehicle_positions, 1, mark_trip_record);
+            if (changed_kinds[1]) replacement.rebuildRealtimeVehiclePositionIndexes();
+        }
+        if (present[2]) {
+            replacement.realtime_alerts = apply_kind(data.realtime_alerts, staged.realtime_alerts, 2, no_mark);
+            if (changed_kinds[2]) replacement.rebuildRealtimeAlertIndexes();
+        }
 
-        const bool changed_anything = !changed_trip_ids.empty() || !staged.realtime_alerts.empty() ||
-            alerts.size() != data.realtime_alerts.size();
-        if (changed_anything) {
-            data.realtime_trip_updates.swap(trip_updates);
-            data.realtime_vehicle_positions.swap(vehicle_positions);
-            data.realtime_alerts.swap(alerts);
-            data.rebuildRealtimeIndexes();
+        // Stage vectors and indexes before swapping, so allocation/parse errors
+        // cannot publish a partial update. Absent payload kinds stay untouched.
+        if (changed_kinds[0]) {
+            data.realtime_trip_updates.swap(replacement.realtime_trip_updates);
+            data.realtime_trip_updates_by_trip_id.swap(replacement.realtime_trip_updates_by_trip_id);
+            data.realtime_trip_updates_by_source_id.swap(replacement.realtime_trip_updates_by_source_id);
+        }
+        if (changed_kinds[1]) {
+            data.realtime_vehicle_positions.swap(replacement.realtime_vehicle_positions);
+            data.realtime_vehicle_positions_by_trip_id.swap(replacement.realtime_vehicle_positions_by_trip_id);
+            data.realtime_vehicle_positions_by_source_id.swap(replacement.realtime_vehicle_positions_by_source_id);
+        }
+        if (changed_kinds[2]) {
+            data.realtime_alerts.swap(replacement.realtime_alerts);
+            data.realtime_alerts_by_source_id.swap(replacement.realtime_alerts_by_source_id);
+        }
+        if (changed_kinds[0] || changed_kinds[1] || changed_kinds[2]) {
             ++data.realtime_revision;
         }
 
@@ -1146,7 +1171,7 @@ Napi::Value GTFSAddon::GetRealtimeVehiclePositions(const Napi::CallbackInfo& inf
         if (vp.occupancy_status != -1) obj.Set("occupancy_status", vp.occupancy_status);
         else obj.Set("occupancy_status", env.Null());
 
-        if (vp.occupancy_percentage != -1) obj.Set("occupancy_percentage", vp.occupancy_percentage);
+        if (vp.occupancy_percentage != -1) obj.Set("occupancy_percentage", static_cast<double>(vp.occupancy_percentage));
         else obj.Set("occupancy_percentage", env.Null());
 
         Napi::Array carriages = Napi::Array::New(env, vp.multi_carriage_details.size());
