@@ -115,6 +115,8 @@ export var OccupancyStatus;
     OccupancyStatus[OccupancyStatus["CRUSHED_STANDING_ROOM_ONLY"] = 4] = "CRUSHED_STANDING_ROOM_ONLY";
     OccupancyStatus[OccupancyStatus["FULL"] = 5] = "FULL";
     OccupancyStatus[OccupancyStatus["NOT_ACCEPTING_PASSENGERS"] = 6] = "NOT_ACCEPTING_PASSENGERS";
+    OccupancyStatus[OccupancyStatus["NO_DATA_AVAILABLE"] = 7] = "NO_DATA_AVAILABLE";
+    OccupancyStatus[OccupancyStatus["NOT_BOARDABLE"] = 8] = "NOT_BOARDABLE";
 })(OccupancyStatus || (OccupancyStatus = {}));
 export var AlertCause;
 (function (AlertCause) {
