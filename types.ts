@@ -167,6 +167,8 @@ export enum GTFSMergeStrategy {
 export interface GTFSFeedConfig {
     id: string;
     url: string;
+    /** Caller-owned static ZIP bytes. The URL identifies their publisher; no download or stale fallback occurs. */
+    buffer?: Buffer;
     headers?: Record<string, string>;
     /** Path of a nested GTFS ZIP inside the downloaded archive. */
     archiveEntry?: string;
@@ -180,7 +182,7 @@ export interface GTFSFeedConfig {
 
 export interface GTFSStaticLoadResult {
 	id: string;
-	source: "network" | "fresh-cache" | "stale-cache";
+	source: "network" | "fresh-cache" | "stale-cache" | "local";
 }
 
 export interface GTFSRealtimeLoadResult {

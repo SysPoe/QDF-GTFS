@@ -127,3 +127,20 @@ tried in order only when earlier URLs fail.
 - `getCalendars()`, `getCalendarDates()`
 - `getShapes()`
 - `getFeedInfo()`
+
+### Bundled static feeds
+
+`loadStatic` also accepts an archive `buffer` alongside the feed `id` and a
+publisher `url`. The buffer is parsed locally through the same atomic publication
+path as downloaded feeds. Its content hash and feed ID identify the compiled
+cache; source health reports `local`. Download size limits still apply. Do not
+supply HTTP headers or fallback URLs with a buffer.
+
+```typescript
+import { readFileSync } from 'node:fs';
+await gtfs.loadStatic({
+  id: 'operational',
+  url: 'https://example.com/train-plans',
+  buffer: readFileSync('./weekly-services.zip')
+});
+```

@@ -1421,4 +1421,27 @@ await testCompiledSnapshotPreservesRealtime();
 await testAutomaticCompiledCache();
 await testCompiledSnapshotQueryParity();
 await testPackageMetadata();
+// Bundled operational feeds share the same atomic parser with downloaded feeds.
+const localZip = createZip({
+    "agency.txt": "agency_id,agency_name,agency_url,agency_timezone\na,Local,https://example.test,Australia/Brisbane\n",
+    "routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\nr,a,MTP,Operational,2\n",
+    "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\na,Unknown coordinates,,\nb,Known,-27,153\n",
+    "trips.txt": "route_id,service_id,trip_id,trip_short_name\nr,s,t,82P9\n",
+    "calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\ns,1,1,1,1,1,1,1,20261001,20271001\n",
+    "stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type\nt,23:55:00,23:55:00,a,1,1,1\nt,24:10:00,24:20:00,b,2,1,1\n",
+});
+const localGtfs = new GTFS({ cache: false });
+const localUrl = "https://example.test/master-train-plans";
+assert.deepEqual(await localGtfs.loadStatic([
+    { id: "local-a", url: localUrl, buffer: localZip },
+    { id: "local-b", url: localUrl, buffer: localZip },
+]), [{ id: "local-a", source: "local" }, { id: "local-b", source: "local" }]);
+assert.equal(localGtfs.getTrips().length, 2);
+assert.equal(localGtfs.getStops({ feed_id: "local-a", stop_id: "a" })[0].stop_lat, null);
+assert.equal(localGtfs.getStopTimes({ feed_id: "local-b", trip_id: "t" })[1].departure_time, 87600);
+await assert.rejects(localGtfs.loadStatic({ id: "bad", url: localUrl, buffer: Buffer.from("invalid") }));
+assert.equal(localGtfs.getTrips().length, 2, "invalid local ZIP must preserve the published snapshot");
+await assert.rejects(new GTFS({ maxDownloadBytes: 1 }).loadStatic({ id: "limit", url: localUrl, buffer: localZip }), /limit/);
+await assert.rejects(localGtfs.loadStatic({ id: "empty", url: localUrl, buffer: Buffer.alloc(0) }), /empty/);
+await assert.rejects(localGtfs.loadStatic({ id: "headers", url: localUrl, buffer: localZip, headers: { X: "test" } }), /headers/);
 console.log("All QDF-GTFS tests passed.");

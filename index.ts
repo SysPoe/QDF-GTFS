@@ -413,6 +413,12 @@ function assertHttpUrl(value: string, label: string): void {
  */
 function validateFeedFallbacks(config: GTFSFeedConfig): string[] {
     assertHttpUrl(config.url, `GTFS feed '${config.id}' url`);
+    if (config.buffer !== undefined && !Buffer.isBuffer(config.buffer)) {
+        throw new Error(`GTFS feed '${config.id}' buffer must be ZIP bytes`);
+    }
+    if (config.buffer !== undefined && (config.fallbackUrls?.length || config.headers)) {
+        throw new Error(`GTFS feed '${config.id}' buffer cannot have transport headers or fallbacks`);
+    }
     const fallbacks = config.fallbackUrls ?? [];
     if (!Array.isArray(fallbacks)) throw new Error(`GTFS feed '${config.id}' fallbackUrls must be an array`);
     const seen = new Set<string>();
@@ -589,7 +595,9 @@ export class GTFS {
         // Fallback URLs do not fragment the cache key; feeds sharing a primary URL share
         // one download and try the union of their fallbacks in feed order.
         const sourceKeyOf = (config: GTFSFeedConfig): string =>
-            `${config.url}|${canonicalHeaders(config.headers)}`;
+            config.buffer !== undefined
+                ? `local:${config.id}:${crypto.createHash('sha256').update(config.buffer).digest('hex')}`
+                : `${config.url}|${canonicalHeaders(config.headers)}`;
         const sourceKeys = feedList.map(sourceKeyOf);
         const indicesBySource = new Map<string, number[]>();
         const uniqueSourceKeys: string[] = [];
@@ -605,6 +613,7 @@ export class GTFS {
         type SourceSpec = {
             sourceKey: string;
             url: string;
+            buffer?: Buffer;
             headers?: Record<string, string>;
             fallbackUrls: string[];
             cachePath: string;
@@ -639,6 +648,7 @@ export class GTFS {
             return {
                 sourceKey,
                 url: representative.url,
+                buffer: representative.buffer,
                 headers: representative.headers,
                 fallbackUrls,
                 cachePath,
@@ -665,6 +675,14 @@ export class GTFS {
             finally { validation.clearStatic(); }
         };
         const acquireSource = async (spec: SourceSpec, validateCandidate = false): Promise<AcquiredSource> => {
+            if (spec.buffer !== undefined) {
+                if (!spec.buffer.length || spec.buffer.length > this.maxDownloadBytes) {
+                    throw new Error(`Local GTFS ZIP for ${spec.feedIds.join(', ')} exceeds the size limit or is empty`);
+                }
+                const buffer = Buffer.from(spec.buffer);
+                if (validateCandidate) await validateSource(spec, buffer);
+                return { buffer, source: "local" };
+            }
             let staleBuffer: Buffer | null = null;
             let staleMtimeMs = 0;
             let stalePath: string | null = null;

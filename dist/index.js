@@ -405,6 +405,12 @@ function assertHttpUrl(value, label) {
  */
 function validateFeedFallbacks(config) {
     assertHttpUrl(config.url, `GTFS feed '${config.id}' url`);
+    if (config.buffer !== undefined && !Buffer.isBuffer(config.buffer)) {
+        throw new Error(`GTFS feed '${config.id}' buffer must be ZIP bytes`);
+    }
+    if (config.buffer !== undefined && (config.fallbackUrls?.length || config.headers)) {
+        throw new Error(`GTFS feed '${config.id}' buffer cannot have transport headers or fallbacks`);
+    }
     const fallbacks = config.fallbackUrls ?? [];
     if (!Array.isArray(fallbacks))
         throw new Error(`GTFS feed '${config.id}' fallbackUrls must be an array`);
@@ -567,7 +573,9 @@ export class GTFS {
         // Headers are canonicalized (sorted keys) so key order does not fragment the cache.
         // Fallback URLs do not fragment the cache key; feeds sharing a primary URL share
         // one download and try the union of their fallbacks in feed order.
-        const sourceKeyOf = (config) => `${config.url}|${canonicalHeaders(config.headers)}`;
+        const sourceKeyOf = (config) => config.buffer !== undefined
+            ? `local:${config.id}:${crypto.createHash('sha256').update(config.buffer).digest('hex')}`
+            : `${config.url}|${canonicalHeaders(config.headers)}`;
         const sourceKeys = feedList.map(sourceKeyOf);
         const indicesBySource = new Map();
         const uniqueSourceKeys = [];
@@ -610,6 +618,7 @@ export class GTFS {
             return {
                 sourceKey,
                 url: representative.url,
+                buffer: representative.buffer,
                 headers: representative.headers,
                 fallbackUrls,
                 cachePath,
@@ -638,6 +647,15 @@ export class GTFS {
             }
         };
         const acquireSource = async (spec, validateCandidate = false) => {
+            if (spec.buffer !== undefined) {
+                if (!spec.buffer.length || spec.buffer.length > this.maxDownloadBytes) {
+                    throw new Error(`Local GTFS ZIP for ${spec.feedIds.join(', ')} exceeds the size limit or is empty`);
+                }
+                const buffer = Buffer.from(spec.buffer);
+                if (validateCandidate)
+                    await validateSource(spec, buffer);
+                return { buffer, source: "local" };
+            }
             let staleBuffer = null;
             let staleMtimeMs = 0;
             let stalePath = null;
